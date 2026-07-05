@@ -11,18 +11,30 @@ import type {
 } from "@/lib/types";
 import * as binance from "@/lib/data-sources/binance";
 import * as yahoo from "@/lib/data-sources/yahoo";
+import { persistCandles } from "@/lib/persist-candles";
 
 export async function getCandles(
   instrument: Instrument,
   range: Range
 ): Promise<DataResult<Candle[]>> {
-  if (instrument.source === "binance") return binance.getKlines(instrument.ticker, range);
-  if (instrument.source === "yahoo") {
+  let result: DataResult<Candle[]>;
+  if (instrument.source === "binance") {
+    result = await binance.getKlines(instrument.ticker, range);
+  } else if (instrument.source === "yahoo") {
     const r = await yahoo.getChart(instrument.ticker, range);
-    if (!r.ok || !r.data) return { ok: false, error: r.error };
-    return { ok: true, data: r.data.candles, provenance: r.provenance };
+    if (!r.ok || !r.data) {
+      result = { ok: false, error: r.error };
+    } else {
+      result = { ok: true, data: r.data.candles, provenance: r.provenance };
+    }
+  } else {
+    result = { ok: false, error: `Unknown source: ${instrument.source}` };
   }
-  return { ok: false, error: `Unknown source: ${instrument.source}` };
+  // Write-through persistence (best-effort, non-blocking). PRD §14.
+  if (result.ok && result.data && result.data.length > 0) {
+    persistCandles(instrument, range, result.data);
+  }
+  return result;
 }
 
 export async function getQuote(instrument: Instrument): Promise<DataResult<Quote>> {

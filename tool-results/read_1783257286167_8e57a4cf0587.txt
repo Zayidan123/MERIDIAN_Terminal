@@ -1,0 +1,855 @@
+     1→# MERIDIAN Terminal — Work Log
+     2→
+     3→Multi-asset research, signal, risk & portfolio terminal.
+     4→Platform name: **MERIDIAN Terminal**.
+     5→
+     6→Real data sources (verified working in this sandbox):
+     7→- Crypto: Binance `data-api.binance.vision` (klines + ticker/price)
+     8→- IDX equities: Yahoo Finance `query2.finance.yahoo.com` (`.JK` tickers)
+     9→- Forex: Yahoo Finance (`EURUSD=X`, etc.)
+    10→- Gold: Yahoo Finance `GC=F` (COMEX Gold Futures)
+    11→
+    12→Non-negotiable data integrity rule (PRD §6): NO simulated/dummy/placeholder data
+    13→in any environment. When a source is down/rate-limited, surface the failure
+    14→explicitly (Loading / No data / Source unavailable). Every panel shows a
+    15→Provenance Bar (source + sync time).
+    16→
+    17→---
+    18→Task ID: 1
+    19→Agent: main (orchestrator)
+    20→Task: Foundation — institutional theme/fonts, Prisma schema (db pushed), lib utilities (types, formatters, indicators, data-health w/ logging+cache, data source clients for Binance & Yahoo, unified facade, seed of real instruments, API helpers).
+    21→
+    22→Work Log:
+    23→- Wrote `src/app/globals.css` with institutional dark palette (#0B0E13 bg, #151920 panel, #262B33 border, #E7E9EC text, gain #2E9E6D, loss #C7484B, brand #3B5FE0). Added slim scrollbar, live-pulse + flash animations, `.tabular` helper.
+    24→- Wrote `src/app/layout.tsx` with Inter (body), IBM Plex Sans (heading), JetBrains Mono (mono) fonts; forced `.dark` class on `<html>`; updated metadata to MERIDIAN Terminal.
+    25→- Wrote `prisma/schema.prisma` with models: Instrument, Fundamental, Watchlist, WatchlistItem, Alert, SignalEvent, Position, RiskSnapshot, DataSourceHealthLog. Ran `bun run db:push` (synced + generated client).
+    26→- Wrote `src/lib/types.ts` (domain types: AssetClass, Instrument, Candle, Quote, Fundamental, HealthStatus, Provenance, AlertRule, SignalEvent, Position, RiskSummary, CorrelationCell, DataResult).
+    27→- Wrote `src/lib/format.ts` (fmtPrice/fmtCompact/fmtPct/fmtTimeAgo/fmtClock/changeColor + ASSET_CLASS_META + SOURCE_LABELS).
+    28→- Wrote `src/lib/data-health.ts` (in-memory TTL cache, `logHealth` writes to DataSourceHealthLog non-blocking + keeps ring buffer, `fetchWithRetry` w/ timeout+backoff, `getRecentHealth`, `getLatestHealthBySource`).
+    29→- Wrote `src/lib/indicators.ts` (sma, ema, rsi Wilder, macd, snapshot, returnsStats, volumeZScore, correlation, valueAtRisk).
+    30→- Wrote `src/lib/data-sources/binance.ts` (getKlines, getQuote — derives 24h stats from 24h klines, honest nulls on failure).
+    31→- Wrote `src/lib/data-sources/yahoo.ts` (getChart, getQuote — IDX/forex/gold via query2 + User-Agent).
+    32→- Wrote `src/lib/data-sources/index.ts` (unified facade getCandles/getQuote/getQuotes).
+    33→- Wrote `src/lib/seed.ts` (SEED_INSTRUMENTS — real tickers only: 7 crypto Binance, 7 IDX, 4 forex, 1 gold; `ensureSeed` idempotent).
+    34→- Wrote `src/lib/api.ts` (ok/fail/fromResult envelope helpers).
+    35→
+    36→Stage Summary:
+    37→- Foundation complete. DB synced. All data-layer primitives ready.
+    38→- Conventions established: every data-source call returns `DataResult<T>` with optional `provenance`; failures are surfaced, never fabricated. API routes use `ok/fail/fromResult` envelope.
+    39→- Next: parallel API route subagents (2-a data layer, 2-b alerts/signals, 2-c portfolio/risk), then frontend.
+    40→
+    41→---
+    42→Task ID: 2-a
+    43→Agent: full-stack-developer (data layer API)
+    44→Task: Build the 12 App-Router API routes under `src/app/api/v1/...` for the
+    45→MERIDIAN Terminal data layer — instruments CRUD, watchlist management, prices
+    46→(candles), quotes (single + concurrent batch), technicals, fundamentals,
+    47→market-summary, health, and explicit seed. Every route honors PRD §6 (no
+    48→fabricated data; failures surface as explicit `ok:false` with per-row errors).
+    49→Every market-data response carries a `provenance` object.
+    50→
+    51→Work Log:
+    52→- Read worklog + lib foundations (types, api envelope, data-sources facade,
+    53→  binance + yahoo clients, indicators, data-health, seed, format, schema).
+    54→- Exported the shared `UA` User-Agent constant from `src/lib/data-sources/yahoo.ts`
+    55→  so the fundamentals route can reuse it for the Yahoo quoteSummary fetch.
+    56→- Created `src/app/api/v1/instruments/route.ts` — GET (calls ensureSeed first,
+    57→  optional `?assetClass=` filter, returns Instrument[]) + POST (validates
+    58→  ticker/symbol/name/currency/assetClass/source, unique-constraint → 409,
+    59→  also attaches to Default watchlist).
+    60→- Created `src/app/api/v1/instruments/[id]/route.ts` — GET (404 if missing) +
+    61→  DELETE (cascades via schema onDelete Cascade). Returns `{ ok, data: true }`.
+    62→- Created `src/app/api/v1/watchlist/route.ts` — GET returns Default watchlist
+    63→  with included instruments sorted by symbol, shape:
+    64→  `{ id, name, items: [{ id, instrument, addedAt }] }`.
+    65→- Created `src/app/api/v1/watchlist/[instrumentId]/route.ts` — POST (upsert =
+    66→  idempotent add) + DELETE (deleteMany on watchlistId+instrumentId).
+    67→- Created `src/app/api/v1/prices/[instrumentId]/route.ts` — GET `?range=`
+    68→  (default 7d, validates against allowed list). Calls getCandles, returns
+    69→  `{ instrument, range, candles }` + provenance via ok(). On data failure
+    70→  returns fromResult(...) → 502.
+    71→- Created `src/app/api/v1/quotes/route.ts` — GET concurrent quotes for all
+    72→  Default watchlist instruments. Returns per-row discriminated union:
+    73→  success `{ ok:true, instrumentId, ticker, symbol, quote, provenance }` or
+    74→  failure `{ ok:false, instrumentId, ticker, symbol, error }`. Aggregate
+    75→  `provenance.syncedAt` = max of successful rows.
+    76→- Created `src/app/api/v1/quotes/[instrumentId]/route.ts` — GET single quote,
+    77→  delegates to fromResult(getQuote(instrument)).
+    78→- Created `src/app/api/v1/technicals/[instrumentId]/route.ts` — GET `?range=`
+    79→  (default 3m). Fetches candles, computes `snapshot(candles)` + `volumeZScore`
+    80→  + `returnsStats` + `lastClose`. Returns `{ technicals, volumeZScore,
+    81→  returnsStats, lastClose, range, candleCount }` + provenance.
+    82→- Created `src/app/api/v1/fundamentals/[instrumentId]/route.ts` — GET:
+    83→  • FOREX/COMMODITY → 400 "Fundamentals not applicable for this asset class".
+    84→  • CRYPTO → 502 "No fundamental data source configured for this crypto
+    85→    instrument" (Binance tickers don't map cleanly to Yahoo crypto tickers;
+    86→    prefer honesty over fabrication).
+    87→  • EQUITY → fetches Yahoo `/v10/finance/quoteSummary/{ticker}?modules=
+    88→    summaryDetail,defaultKeyStatistics,financialData` with the shared UA.
+    89→    Defensive field parsing (tolerates both `{raw: n}` and flat `n` shapes).
+    90→    Parses trailingPE / priceToBook / returnOnEquity / totalRevenue /
+    91→    netIncomeToCommon / trailingEps / bookValuePerShare. Computes Graham
+    92→    number = sqrt(22.5 * EPS * BVPS) only when both available & positive;
+    93→    dcfFair always null (we don't have FCF proxies — never invent).
+    94→    Upserts into Fundamental table (keyed by ticker) + returns stored record
+    95→    with provenance `{ source:"yahoo", sourceLabel:"Yahoo Finance",
+    96→    syncedAt, status:"OK" }`. On fetch failure → 502 with the upstream error
+    97→    (e.g. "HTTP 429" when rate-limited). Logs to DataSourceHealthLog.
+    98→- Created `src/app/api/v1/market-summary/route.ts` — GET cross-asset snapshot
+    99→  for the dashboard header. Pulls 5 representative instruments (BTCUSDT,
+   100→  ETHUSDT, BBCA.JK, GC=F, EURUSD=X) from db by ticker, calls getQuotes,
+   101→  aggregates gainers/losers/unchanged/failed counts + avgChangePct +
+   102→  byAssetClass average pct (null when class has 0 successful quotes).
+   103→- Created `src/app/api/v1/health/route.ts` — GET returns `{ latest, recent }`
+   104→  where `latest` is per-source typed records from `getLatestHealthBySource()`
+   105→  and `recent` is the most recent 30 rows from DataSourceHealthLog ordered
+   106→  by createdAt desc.
+   107→- Created `src/app/api/v1/seed/route.ts` — POST explicitly runs ensureSeed()
+   108→  and returns `{ ok, data: { seeded: true } }`.
+   109→- All route handlers: Next.js 16 async `params: Promise<{...}>` awaited before
+   110→  reading. Whole body wrapped in try/catch → `fail("Internal error", 500)`.
+   111→  No `any` types — used `unknown` + runtime type guards for body parsing.
+   112→- Verified lint: `bun run lint` → exit 0, no errors.
+   113→- Smoke-tested every route against the live dev server:
+   114→  • instruments GET (with and without ?assetClass), POST custom + duplicate
+   115→    (409) + invalid source (400) + DELETE cleanup ✓
+   116→  • watchlist GET, POST add (idempotent) + DELETE remove ✓
+   117→  • prices/quotes/technicals for BTCUSDT (real Binance data, all OK) ✓
+   118→  • quotes (all 19 watchlist rows) — Yahoo rows surfaced HTTP 429 per-row
+   119→    with ok:false (integrity policy working as designed) ✓
+   120→  • fundamentals for FOREX (400), CRYPTO (502), EQUITY BBCA.JK (502 HTTP 429
+   121→    — Yahoo quoteSummary rate-limited in sandbox, surfaced honestly) ✓
+   122→  • market-summary (2 gainers, 0 losers, 3 failed, byAssetClass CRYPTO has
+   123→    avg, others null) ✓
+   124→  • health (latest empty until first external call — expected, since
+   125→    getLatestHealthBySource uses the in-memory ring buffer) ✓
+   126→  • seed POST ✓
+   127→  • 404 for unknown instrument id ✓
+   128→  • invalid range falls back to default ✓
+   129→
+   130→Stage Summary:
+   131→Files created (12 routes + 1 lib tweak):
+   132→- src/lib/data-sources/yahoo.ts            (modified: exported UA constant)
+   133→- src/app/api/v1/instruments/route.ts
+   134→- src/app/api/v1/instruments/[id]/route.ts
+   135→- src/app/api/v1/watchlist/route.ts
+   136→- src/app/api/v1/watchlist/[instrumentId]/route.ts
+   137→- src/app/api/v1/prices/[instrumentId]/route.ts
+   138→- src/app/api/v1/quotes/route.ts
+   139→- src/app/api/v1/quotes/[instrumentId]/route.ts
+   140→- src/app/api/v1/technicals/[instrumentId]/route.ts
+   141→- src/app/api/v1/fundamentals/[instrumentId]/route.ts
+   142→- src/app/api/v1/market-summary/route.ts
+   143→- src/app/api/v1/health/route.ts
+   144→- src/app/api/v1/seed/route.ts
+   145→
+   146→Key decisions:
+   147→- All envelopes are `{ ok:true, data, provenance? }` or
+   148→  `{ ok:false, error, ... }` — `ok`/`fail`/`fromResult` helpers from lib/api.
+   149→- ensureSeed() is called only on GET /instruments and POST /seed (per task
+   150→  spec) to avoid wasteful upserts on every price/quote call.
+   151→- All datetime fields returned as epoch ms (number) at the API boundary —
+   152→  Prisma Date objects are converted via .getTime().
+   153→- Per-row discriminated union on /quotes so the frontend can render each row
+   154→  independently with a per-row "Source unavailable" badge when its source
+   155→  fails — this is the core of the integrity policy at the UI level.
+   156→- Yahoo quoteSummary is wrapped in fetchWithRetry (2 retries, 8s timeout) and
+   157→  logs to DataSourceHealthLog via logHealth(), matching the chart/price paths.
+   158→- Lint: clean (exit 0).
+   159→
+   160→Response shapes the frontend agent should consume (TypeScript interfaces):
+   161→
+   162→```ts
+   163→// GET /api/v1/instruments          POST /api/v1/instruments
+   164→// GET /api/v1/instruments/[id]
+   165→type Instrument = {
+   166→  id: string;
+   167→  assetClass: "CRYPTO" | "EQUITY" | "FOREX" | "COMMODITY";
+   168→  ticker: string; symbol: string; name: string;
+   169→  exchange: string | null; currency: string;
+   170→  source: "binance" | "yahoo" | "coingecko";
+   171→  lotSize: number | null; metadata: string | null;
+   172→};
+   173→data: Instrument[] | Instrument
+   174→
+   175→// DELETE /api/v1/instruments/[id]
+   176→data: true
+   177→
+   178→// GET /api/v1/watchlist
+   179→data: {
+   180→  id: string; name: string;
+   181→  items: { id: string; instrument: Instrument; addedAt: number }[];
+   182→}
+   183→
+   184→// POST /api/v1/watchlist/[id]      DELETE /api/v1/watchlist/[id]
+   185→data: { added: true, watchlistId: string, instrumentId: string }
+   186→   |  { removed: true }
+   187→
+   188→// GET /api/v1/prices/[id]?range=1d|7d|1m|3m|1y
+   189→data: { instrument: Instrument; range: string; candles: Candle[] }
+   190→provenance: { source, sourceLabel, syncedAt, status? }
+   191→// Candle = { time, open, high, low, close, volume } (time = epoch ms)
+   192→
+   193→// GET /api/v1/quotes
+   194→data: {
+   195→  quotes: ({
+   196→    ok: true; instrumentId: string; ticker: string; symbol: string;
+   197→    quote: Quote; provenance: Provenance;
+   198→  } | {
+   199→    ok: false; instrumentId: string; ticker: string; symbol: string;
+   200→    error: string;
+   201→  })[];
+   202→  provenance: { source:"multi", sourceLabel:"Multi-source", syncedAt: number };
+   203→}
+   204→
+   205→// GET /api/v1/quotes/[id]
+   206→data: Quote
+   207→// Quote = { ticker, symbol, assetClass, price, prevClose, change24h,
+   208→//   changePct24h, high24h, low24h, volume24h, quoteVolume24h, currency,
+   209→//   source, syncedAt }
+   210→
+   211→// GET /api/v1/technicals/[id]?range=...
+   212→data: {
+   213→  technicals: { ma20, ma50, ema12, rsi14, macd, macdSignal, macdHist }; // all number|null
+   214→  volumeZScore: number | null;
+   215→  returnsStats: { mean: number; std: number; sample: number };
+   216→  lastClose: number; range: string; candleCount: number;
+   217→}
+   218→
+   219→// GET /api/v1/fundamentals/[id]
+   220→// success (equity):
+   221→data: Fundamental
+   222→// Fundamental = { ticker, revenue, netIncome, eps, roe, per, pbv, graham,
+   223→//   dcfFair, source, fetchedAt } (all numeric fields nullable)
+   224→// failure → { ok:false, error: string } with HTTP 400 (FOREX/COMMODITY) or
+   225→//   502 (CRYPTO or Yahoo fetch failure)
+   226→
+   227→// GET /api/v1/market-summary
+   228→data: {
+   229→  gainers: number; losers: number; unchanged: number; failed: number;
+   230→  avgChangePct: number | null;
+   231→  byAssetClass: { CRYPTO: number|null; EQUITY: number|null;
+   232→                  FOREX: number|null; COMMODITY: number|null };
+   233→  asOf: number;
+   234→}
+   235→
+   236→// GET /api/v1/health
+   237→data: {
+   238→  latest: { source: DataSourceKey; status: HealthStatus; latencyMs: number;
+   239→            checkedAt: number }[];
+   240→  recent: { id: string; source: string; endpoint: string; status: string;
+   241→            latencyMs: number | null; errorMessage: string | null;
+   242→            createdAt: number }[];
+   243→}
+   244→
+   245→// POST /api/v1/seed
+   246→data: { seeded: true }
+   247→```
+   248→
+   249→Lint issues: none. `bun run lint` exits 0.
+   250→
+   251→Notes for the frontend agent:
+   252→- Always handle `ok:false` per-row on `/api/v1/quotes` — Yahoo rows will
+   253→  frequently fail with HTTP 429 in this sandbox; render a "Source unavailable"
+   254→  badge for those rows without hiding successful crypto rows.
+   255→- The fundamentals route for EQUITY may return 502 with `error:"HTTP 429"`
+   256→  when Yahoo is rate-limiting; show a retry affordance + the provenance bar.
+   257→- All epoch times are returned in milliseconds.
+   258→- The `/api/v1/health` `latest` array starts empty until the first external
+   259→  call populates the in-memory ring buffer. If the frontend hits it on first
+   260→  paint, expect `latest: []`; poll after the first market-data request to see
+   261→  populated status.
+   262→
+   263→---
+   264→Task ID: 2-b
+   265→Agent: full-stack-developer (alerts & signals API)
+   266→Task: Build the 5 Alerts & Signals App-Router API routes for MERIDIAN Terminal —
+   267→alerts list/create, alert PATCH/soft-delete, alert evaluation engine (signal
+   268→detection from REAL market data), signals list with filters, and anomaly/pattern
+   269→scanner over the watchlist. Every route honors PRD §6 (no fabricated data;
+   270→failures surface explicitly). Each emitted SignalEvent carries the full data
+   271→context that triggered it for later accuracy evaluation (FR-2.4).
+   272→
+   273→Work Log:
+   274→- Read worklog + lib foundations (types, api envelope, data-sources facade,
+   275→  indicators, seed, format, schema) + 2-a route patterns for consistency.
+   276→- Created `src/app/api/v1/alerts/route.ts` — GET (status != "DELETED",
+   277→  include instrument, orderBy createdAt desc) + POST (validates metric ∈
+   278→  {price, pct_change_24h, volume_spike, rsi, price_above_ma}, operator ∈
+   279→  {gt, lt, cross_up, cross_down}, threshold is finite number, instrumentId
+   280→  exists in DB; defaults status "ACTIVE"). Returns AlertWithInstrument.
+   281→- Created `src/app/api/v1/alerts/[id]/route.ts` — PATCH (only status /
+   282→  threshold / operator / note; each field validated if present; "No valid
+   283→  fields to update" if body empty) + DELETE (soft-delete: status="DELETED",
+   284→  row retained). 404 on missing id for both.
+   285→- Created `src/app/api/v1/alerts/evaluate/route.ts` — POST signal engine.
+   286→  Loads all status="ACTIVE" alerts (with instrument), iterates sequentially.
+   287→  Per-alert, fetches real data via getQuote / getCandles and computes the
+   288→  observed value per metric:
+   289→    • price → quote.price; previous = quote.prevClose (for cross detection)
+   290→    • pct_change_24h → quote.changePct24h; previous = null (cross degrades)
+   291→    • rsi → snapshot(candles 3m).rsi14; previous = rsi(candles,14)[-2]
+   292→    • volume_spike → volumeZScore(candles 1m, 20); previous = null
+   293→    • price_above_ma → ((lastClose - ma) / ma) * 100 % offset; previous
+   294→      computed from prevClose vs same ma; ma = snapshot.ma20 ?? snapshot.ma50
+   295→  On condition met: db.$transaction([update alert status="TRIGGERED" +
+   296→  triggeredAt=now, create SignalEvent signalType="ALERT_TRIGGER" with full
+   297→  contextJson]). Severity: volume_spike & rsi → WARN, others → INFO.
+   298→  On data fetch failure: pushed to skipped[] with the upstream error (e.g.
+   299→  "HTTP 429"). Already-TRIGGERED alerts are not re-evaluated (only ACTIVE
+   300→  alerts are loaded). Per-request FetchCache memoizes quote + candle fetches
+   301→  per instrumentId:range so multiple alerts on the same instrument don't
+   302→  hammer upstream.
+   303→- Created `src/app/api/v1/signals/route.ts` — GET recent SignalEvents with
+   304→  filters: ?limit (1..200, default 50), ?signalType (validated against
+   305→  allowed set; invalid silently ignored), ?since=<epochMs>. Includes
+   306→  instrument relation. contextJson parsed to `context` object (null on
+   307→  parse failure, never crashes the list). Ordered createdAt desc.
+   308→- Created `src/app/api/v1/signals/scan/route.ts` — POST anomaly & pattern
+   309→  scanner. Loads Default watchlist instruments, fetches real 3m candles per
+   310→  instrument, runs pure `detect()` function:
+   311→    • VOLUME_SPIKE  volumeZScore(20) > 2.5    → WARN
+   312→    • BREAKOUT      lastClose > max(prior 20)  → INFO
+   313→    • RSI_OB        rsi14 > 70                 → WARN
+   314→    • RSI_OS        rsi14 < 30                 → WARN
+   315→    • ANOMALY       |lastLogRet - μ| > 3σ      → CRITICAL
+   316→  All baselines (μ, σ, z-score, RSI) computed from the REAL candle window —
+   317→  no arbitrary thresholds. Per detection: dedupe via
+   318→  db.signalEvent.findFirst({ instrumentId, signalType, createdAt > 1h ago });
+   319→  if exists, skip silently. Otherwise create SignalEvent with contextJson
+   320→  that includes the metric-specific computed values + last3Candles for later
+   321→  evaluation. Candle-fetch failures per instrument → skipped[] with error.
+   322→- Bug found & fixed during smoke test: FetchCache initially had a private
+   323→  field `candles: Map<...>` colliding with the `candles(...)` method name.
+   324→  Class fields are instance properties; they shadow prototype methods at
+   325→  runtime, so `cache.candles(...)` threw "cache.candles is not a function".
+   326→  Renamed fields to `quoteMap` / `candleMap` and added an inline comment.
+   327→- All route handlers: Next.js 16 `params: Promise<{...}>` awaited before
+   328→  reading. Whole body wrapped in try/catch → `fail("Internal error", 500)`.
+   329→  No `any` types — `unknown` + runtime narrowing for body parsing. No
+   330→  `eval`/`exec`, no SQL string concatenation (Prisma only).
+   331→- Verified lint: `bun run lint` → exit 0, no errors.
+   332→- Smoke-tested every route against the live dev server:
+   333→  • alerts GET (empty then 3 → 6 after creations) ✓
+   334→  • alerts POST validation (missing instrumentId, bad metric, bad operator,
+   335→    non-finite threshold, nonexistent instrumentId) → all 400 with correct
+   336→    messages ✓
+   337→  • alerts POST success → 200 with instrument included, status=ACTIVE ✓
+   338→  • alerts/[id] PATCH validation (bad status, bad operator, no fields, 404)
+   339→    ✓ + success (note + threshold update, status PAUSED→ACTIVE) ✓
+   340→  • alerts/[id] DELETE soft-delete (alert disappears from GET list) + 404
+   341→    for unknown id ✓
+   342→  • alerts/evaluate POST: 3 ACTIVE BTC alerts evaluated against real
+   343→    Binance quote ($62,616). 2 triggered (price>1000, pct_change_24h>-100),
+   344→    1 no-trigger (price>150000). SignalEvents created with proper severity
+   345→    (INFO for price/pct_change_24h, WARN for rsi/volume_spike). Idempotent
+   346→    re-evaluate (only remaining ACTIVE alert processed) ✓
+   347→  • alerts/evaluate with EUR/USD alert (Yahoo): correctly skipped with
+   348→    `error: "HTTP 429"` — integrity policy working ✓
+   349→  • alerts/evaluate all 5 metrics (price, pct_change_24h, rsi=47.85,
+   350→    volume_spike z=-1.70, price_above_ma offset=+0.92%) — all working with
+   351→    real data + correct context (prevClose / previousRsi / ma / lastClose) ✓
+   352→  • signals GET with filters: limit (1, 500 capped at 200), signalType
+   353→    (ALERT_TRIGGER=2 results, VOLUME_SPIKE=0), since (future=0, 0=all) ✓
+   354→  • signals/scan POST: 19 watchlist instruments scanned, 0 detected (no
+   355→    current anomalies), 12 skipped (Yahoo HTTP 429), 7 crypto scanned
+   356→    successfully. ~1.3s end-to-end ✓
+   357→
+   358→Stage Summary:
+   359→Files created (5 routes):
+   360→- src/app/api/v1/alerts/route.ts
+   361→- src/app/api/v1/alerts/[id]/route.ts
+   362→- src/app/api/v1/alerts/evaluate/route.ts
+   363→- src/app/api/v1/signals/route.ts
+   364→- src/app/api/v1/signals/scan/route.ts
+   365→
+   366→Key decisions:
+   367→- Per-request FetchCache in /alerts/evaluate memoizes quote + candle fetches
+   368→  (keyed by instrumentId:range) so multiple alerts on the same instrument
+   369→  don't trigger duplicate upstream calls within one evaluation pass.
+   370→- /alerts/evaluate runs sequentially (not Promise.all) to avoid hammering
+   371→  external APIs; latency budget is comfortable (~500ms for 4 alerts even
+   372→  when fetching 3m + 1m candles for the same instrument).
+   373→- /signals/scan also runs sequentially for the same reason.
+   374→- price_above_ma threshold is interpreted as a percentage offset from MA
+   375→  (threshold=0 = right at MA, threshold=5 = 5% above MA). This is the most
+   376→  flexible interpretation and matches the spec's "cross_up = prevClose <=
+   377→  ma && lastClose > ma" when threshold=0.
+   378→- For metrics without a meaningful "previous" value (pct_change_24h,
+   379→  volume_spike), cross_up/cross_down degrade to gt/lt — documented inline.
+   380→- Dedupe in /signals/scan is silent (deduped detections are NOT added to
+   381→  detected[] or skipped[]). The frontend can hit GET /signals to see all
+   382→  existing events.
+   383→- SignalEvent.contextJson is parsed to `context` object at the GET /signals
+   384→  boundary (null on parse failure — never crashes the list response).
+   385→- All datetime fields returned as epoch ms at the API boundary (Prisma Date
+   386→  → .getTime()), matching the 2-a convention.
+   387→
+   388→Response shapes the frontend agent should consume (TypeScript interfaces):
+   389→
+   390→```ts
+   391→// GET /api/v1/alerts                       POST /api/v1/alerts
+   392→// PATCH /api/v1/alerts/[id]
+   393→// (POST/PATCH return a single object, GET returns an array)
+   394→type AlertWithInstrument = {
+   395→  id: string;
+   396→  instrumentId: string;
+   397→  instrument: Instrument;        // { id, assetClass, ticker, symbol, name,
+   398→                                 //   exchange, currency, source, lotSize, metadata }
+   399→  metric: "price" | "pct_change_24h" | "volume_spike" | "rsi" | "price_above_ma";
+   400→  operator: "gt" | "lt" | "cross_up" | "cross_down";
+   401→  threshold: number;
+   402→  status: "ACTIVE" | "TRIGGERED" | "PAUSED" | "DELETED";
+   403→  note: string | null;
+   404→  createdAt: number;             // epoch ms
+   405→  triggeredAt: number | null;    // epoch ms
+   406→  updatedAt: number;             // epoch ms
+   407→};
+   408→
+   409→// DELETE /api/v1/alerts/[id]
+   410→data: true
+   411→
+   412→// POST /api/v1/alerts/evaluate
+   413→data: {
+   414→  evaluated: number;
+   415→  triggered: Array<{
+   416→    alertId: string;
+   417→    instrumentId: string;
+   418→    ticker: string;
+   419→    symbol: string;
+   420→    metric: string;
+   421→    operator: string;
+   422→    threshold: number;
+   423→    observed: number;
+   424→    priceAtEvent: number;
+   425→    severity: "INFO" | "WARN" | "CRITICAL";
+   426→    message: string;
+   427→    signalEventId: string;
+   428→  }>;
+   429→  skipped: Array<{
+   430→    alertId: string;
+   431→    instrumentId: string;
+   432→    ticker: string;
+   433→    symbol: string;
+   434→    error: string;
+   435→  }>;
+   436→}
+   437→
+   438→// GET /api/v1/signals?limit=&signalType=&since=
+   439→data: SignalEventWithInstrument[]
+   440→type SignalEventWithInstrument = {
+   441→  id: string;
+   442→  instrumentId: string;
+   443→  instrument: Instrument;
+   444→  signalType: "VOLUME_SPIKE" | "BREAKOUT" | "RSI_OB" | "RSI_OS"
+   445→            | "ALERT_TRIGGER" | "ANOMALY";
+   446→  severity: "INFO" | "WARN" | "CRITICAL";
+   447→  message: string;
+   448→  priceAtEvent: number | null;
+   449→  context: Record<string, unknown> | null;
+   450→  createdAt: number;
+   451→};
+   452→
+   453→// POST /api/v1/signals/scan
+   454→data: {
+   455→  scanned: number;
+   456→  detected: Array<{
+   457→    instrumentId: string;
+   458→    ticker: string;
+   459→    symbol: string;
+   460→    signalType: string;
+   461→    severity: string;
+   462→    message: string;
+   463→    priceAtEvent: number;
+   464→    context: Record<string, unknown>;
+   465→    signalEventId: string;
+   466→  }>;
+   467→  skipped: Array<{
+   468→    instrumentId: string;
+   469→    ticker: string;
+   470→    symbol: string;
+   471→    error: string;
+   472→  }>;
+   473→}
+   474→```
+   475→
+   476→Lint issues: none. `bun run lint` exits 0.
+   477→
+   478→Notes for the frontend agent:
+   479→- Polling strategy:
+   480→  • POST /alerts/evaluate every 60s. After each poll: if triggered.length > 0,
+   481→    refetch GET /alerts (to update ACTIVE → TRIGGERED) and GET /signals (to
+   482→    display new ALERT_TRIGGER events). Surface skipped[] in a "data source
+   483→    degraded" panel per-instrument (e.g. "EUR/USD: HTTP 429").
+   484→  • POST /signals/scan every 2-5 minutes (heavier — fetches 3m candles for
+   485→    every watchlist instrument). After each poll: if detected.length > 0,
+   486→    refetch GET /signals to display new anomaly events. Deduplication is
+   487→    server-side (1h window per instrumentId+signalType), so the frontend
+   488→    doesn't need to dedupe.
+   489→  • Both endpoints are safe to call concurrently.
+   490→- Metric semantics for the alert-create form:
+   491→  • price: absolute price (e.g. 100000). cross_up fires when prevClose ≤
+   492→    threshold < current price.
+   493→  • pct_change_24h: percent (e.g. 5 = +5%). Cross degrades to gt/lt.
+   494→  • rsi: RSI value 0–100. cross uses second-to-last RSI from series.
+   495→  • volume_spike: z-score (e.g. 2.5 = 2.5σ above 20-bar mean volume).
+   496→  • price_above_ma: **percentage offset from MA** (0 = right at MA, 5 = 5%
+   497→    above). MA used is MA20 (or MA50 if MA20 null).
+   498→- Yahoo instruments (EQUITY/FOREX/COMMODITY) will frequently surface HTTP
+   499→  429 in the `skipped` arrays of both /alerts/evaluate and /signals/scan.
+   500→  Render those rows with a "Source unavailable" badge without hiding the
+   501→  successful crypto rows.
+   502→- All epoch times are returned in milliseconds.
+   503→- The `context` object on SignalEvent varies by signalType — render it
+   504→  defensively (Object.entries → key/value table). Common keys: metric,
+   505→  operator, threshold, observed, priceAtEvent (ALERT_TRIGGER); zScore,
+   506→  lookback (VOLUME_SPIKE); breakoutLevel (BREAKOUT); rsi14 (RSI_OB/OS);
+   507→  lastReturn, mean, std, zScore (ANOMALY); last3Candles (always present on
+   508→  scan-emitted events for later accuracy evaluation).
+   509→
+   510→---
+   511→Task ID: 2-c
+   512→Agent: full-stack-developer (portfolio & risk API)
+   513→Task: Build the 4 Portfolio & Risk Management App-Router API routes for
+   514→MERIDIAN Terminal — portfolio list/create, single position PATCH/DELETE,
+   515→full portfolio RiskSummary (exposure per asset class, VaR, drawdown,
+   516→correlation matrix — all from REAL live prices + REAL 3m daily candles),
+   517→and a pure position-sizing calculator. Every route honors PRD §6 (no
+   518→fabricated data; per-position quote/candle failures surface explicitly as
+   519→null fields + an `error` string). RiskSummary persists a RiskSnapshot row
+   520→(non-blocking) for historical trending.
+   521→
+   522→Work Log:
+   523→- Read worklog + lib foundations (types, api envelope, data-sources facade,
+   524→  indicators w/ correlation() helper, schema, db client) + 2-a and 2-b
+   525→  route patterns for consistency.
+   526→- Created `src/app/api/v1/portfolio/route.ts` —
+   527→  • GET: list all positions with instrument relation (createdAt desc),
+   528→    then concurrent `Promise.all(getQuote)` per position. Computes
+   529→    lastPrice, marketValue (size × lastPrice — same for LONG/SHORT,
+   530→    sign handled in PnL), unrealizedPnl ((last-entry)×size LONG /
+   531→    (entry-last)×size SHORT), unrealizedPnlPct (pnl/cost × 100). On
+   532→    quote failure: lastPrice/marketValue/unrealizedPnl/unrealizedPnlPct
+   533→    all null + `error: string` on that row.
+   534→  • POST: validates side ∈ {LONG,SHORT}, entryPrice>0, size>0,
+   535→    instrumentId exists (400 on any failure). openedAt optional —
+   536→    accepts epoch ms number or ISO string, defaults to now. note optional.
+   537→    Returns the created position with instrument; market fields are null
+   538→    on the create response (caller refetches via GET for live enrichment
+   539→    — keeps the write cheap & decoupled from rate-limited upstreams).
+   540→- Created `src/app/api/v1/portfolio/[id]/route.ts` —
+   541→  • PATCH: 404 if missing. Validates each present field (entryPrice/size
+   542→    >0 via shared `parsePositiveNumber` helper, side ∈ {LONG,SHORT},
+   543→    note string|null). "No valid fields to update" → 400. Returns
+   544→    updated position with instrument; market fields null on response
+   545→    (same rationale as POST).
+   546→  • DELETE: hard-delete per spec. 404 if missing. Returns `{ ok:true }`.
+   547→- Created `src/app/api/v1/risk/summary/route.ts` — the heavy route.
+   548→  Documented the equity definition in a header comment:
+   549→    costBasis     = Σ entryPrice_i × size_i
+   550→    unrealizedPnl = Σ unrealizedPnl_i  (skip nulls)
+   551→    totalEquity   = costBasis + unrealizedPnl
+   552→    totalExposure = Σ marketValue_i    (skip nulls)
+   553→    exposurePct   = totalExposure / totalEquity × 100
+   554→  Pipeline:
+   555→    1. Fetch all positions w/ instrument.
+   556→    2. Concurrent `getQuote` for every position's instrument.
+   557→    3. Per-position marketValue/unrealizedPnl (null on quote failure).
+   558→    4. Aggregate totals.
+   559→    5. perAssetClass: group by instrument.assetClass, sum marketValue,
+   560→       pct of totalExposure, count.
+   561→    6. perPosition: { instrumentId, symbol, assetClass, marketValue,
+   562→       weightPct (of totalExposure), pnlPct } — marketValue is number
+   563→       (0 when quote failed, per RiskSummary type).
+   564→    7. Concurrent `getCandles(instrument, "3m")` for every position.
+   565→       Convert each to Map<time, logReturn> + sorted times array.
+   566→    8. withReturns = positions whose return series has ≥5 points.
+   567→    9. VaR(95%): require ≥2 positions with returns AND totalExposure>0.
+   568→       Build aggregate portfolio return series = Σ w_i × r_i(t) where
+   569→       w_i = marketValue_i / totalExposure, r_i(t) defaults to 0 when
+   570→       instrument i has no observation at t. VaR = totalEquity × 1.645
+   571→       × std(portfolioReturns). Null if n<10 or std=0.
+   572→   10. Drawdown: same portfolio return series. equity_t = costBasis ×
+   573→       Π(1+r_t). peak = running max. dd_t = (equity-peak)/peak.
+   574→       currentDrawdown = last dd × 100. maxDrawdown = min dd × 100.
+   575→       Null if <2 positions or <2 returns.
+   576→   11. Correlation: pairwise between every pair of `withReturns`
+   577→       instruments. Self-pairs (a==a) → value 1 (trivial). Cross-pairs:
+   578→       two-pointer time-alignment of times arrays (intersection), then
+   579→       `correlation(ra, rb)` helper (returns null if <5 overlapping pts
+   580→       or zero variance). Flat list of { a:symbol, b:symbol, value }.
+   581→   12. Persist RiskSnapshot row (totalEquity, totalExposure, exposurePct,
+   582→       varEstimate, maxDrawdown, currentDrawdown) via fire-and-forget
+   583→       `db.riskSnapshot.create(...).catch(...)` — matches the data-health
+   584→       log pattern; never breaks the read path.
+   585→   13. Return `{ ok, data: RiskSummary, provenance:{ source:"multi",
+   586→       sourceLabel:"Multi-source (live)", syncedAt: now } }`.
+   587→- Created `src/app/api/v1/risk/position-size/route.ts` —
+   588→  POST pure calc (no external data). Body: { equity, riskPct, entryPrice,
+   589→  stopPrice, side? }. Validates all numeric inputs finite & >0 (numeric
+   590→  strings accepted). side defaults "LONG". Computes:
+   591→    riskAmount    = equity × riskPct/100
+   592→    perUnitRisk   = |entryPrice - stopPrice|
+   593→    positionSize  = riskAmount / perUnitRisk
+   594→    positionValue = positionSize × entryPrice
+   595→  Returns { equity, riskPct, riskAmount, entryPrice, stopPrice,
+   596→  perUnitRisk, positionSize, positionValue, side }. 400 if stopPrice
+   597→  equals entryPrice (perUnitRisk=0 → infinite size).
+   598→- All route handlers: Next.js 16 async `params: Promise<{...}>` awaited
+   599→  before reading. Whole body wrapped in try/catch → `fail("Internal
+   600→  error", 500)`. No `any` — `unknown` + runtime narrowing for body
+   601→  parsing. No `eval`/`exec`, no SQL string concatenation (Prisma only).
+   602→  Concurrent fetches via Promise.all.
+   603→- Bug found & fixed during smoke test: in `computeMarketFields` of the
+   604→  risk summary route, the local variable was originally named `pnl` but
+   605→  the return statement referenced `unrealizedPnl` (undefined identifier).
+   606→  Renamed the local to `unrealizedPnl` to match. Caught immediately via
+   607→  the dev.log ReferenceError stack trace on the first /risk/summary call.
+   608→- Verified lint: `bun run lint` → exit 0, no errors.
+   609→- Smoke-tested every route against the live dev server:
+   610→  • portfolio POST validation (bad side, entryPrice 0, bad instrumentId,
+   611→    invalid JSON) → all 400 with correct messages ✓
+   612→  • portfolio POST success ×3 (BTC LONG 60000×0.5, ETH SHORT 3000×2,
+   613→    SOL LONG 150×10 with ISO openedAt) ✓
+   614→  • portfolio GET — 3 positions enriched with live Binance quotes:
+   615→    BTC last=62676 mv=31338 pnl=+1344 pnl%=+4.46%, ETH SHORT last=1763
+   616→    mv=3526 pnl=+2473 pnl%=+41.2%, SOL last=80.68 mv=807 pnl=-693
+   617→    pnl%=-46.2% — PnL signs correct for both LONG and SHORT ✓
+   618→  • portfolio/[id] PATCH validation (404 missing, no fields 400, bad
+   619→    side 400, negative entryPrice 400) + success (entryPrice+size+note+
+   620→    side update) ✓
+   621→  • portfolio/[id] DELETE 404 + success (position removed from GET list) ✓
+   622→  • portfolio POST EQUITY (ASII.JK — Yahoo source) + GET — row shows
+   623→    `error: "HTTP 429"`, lastPrice/marketValue/unrealizedPnl/
+   624→    unrealizedPnlPct all null — integrity policy working as designed ✓
+   625→  • risk/summary GET with 3 crypto positions:
+   626→    totalEquity=41451.65 (=costBasis 38800 + unrealized +2651.65 ✓)
+   627→    totalExposure=36515.97 (=Σmv: 31365+3532+1619 ✓)
+   628→    exposurePct=88.09% (=36515/41451 ✓)
+   629→    unrealizedPnl=+2651.65 ✓
+   630→    perAssetClass: CRYPTO 100% count=3 ✓
+   631→    perPosition: BTC 85.9%, ETH 9.7%, SOL 4.4% (Σ=100% ✓)
+   632→    varEstimate=$1349.51 (parametric 95% on portfolio log-returns) ✓
+   633→    currentDrawdown=-24.51%, maxDrawdown=-29.79% (reconstructed from
+   634→    historical portfolio equity curve) ✓
+   635→    correlation: 6 cells (3 self-pairs value=1 + 3 cross-pairs:
+   636→    SOL/ETH=0.84, SOL/BTC=0.82, ETH/BTC=0.89 — high correlation as
+   637→    expected for major cryptos) ✓
+   638→    provenance: { source:"multi", sourceLabel:"Multi-source (live)",
+   639→    syncedAt: 1783254363440 } ✓
+   640→  • risk/summary GET with mixed CRYPTO+EQUITY (EQUITY quote failed):
+   641→    EQUITY position contributes 0 to exposure (marketValue null→0),
+   642→    its cost basis still counts toward totalEquity (per documented
+   643→    definition), exposurePct drops accordingly, correlation matrix
+   644→    excludes the failed-quote instrument (only CRYPTO×CRYPTO pairs) —
+   645→    honest behavior, frontend shows per-position error via /portfolio ✓
+   646→  • risk/summary GET on empty portfolio: returns all-zero totals, null
+   647→    VaR/drawdown, empty perAssetClass/perPosition/correlation ✓
+   648→  • RiskSnapshot persistence verified: 2 rows in DB after 2 calls, with
+   649→    exact totalEquity/totalExposure/exposurePct/varEstimate/maxDrawdown/
+   650→    currentDrawdown values matching the responses ✓
+   651→  • risk/position-size POST:
+   652→    - long BTC equity=50000 riskPct=1 entry=60000 stop=58000 →
+   653→      riskAmount=500, perUnitRisk=2000, positionSize=0.25,
+   654→      positionValue=15000 ✓
+   655→    - short ETH equity=50000 riskPct=2 entry=3000 stop=3100 →
+   656→      riskAmount=1000, perUnitRisk=100, positionSize=10,
+   657→      positionValue=30000 ✓
+   658→    - default side (omitted) → LONG ✓
+   659→    - stop==entry → 400 "Stop price cannot equal entry price" ✓
+   660→    - equity<=0 → 400 "equity must be > 0" ✓
+   661→    - missing field → 400 "{field} must be a finite number" ✓
+   662→    - numeric string coercion ("10000" → 10000) ✓
+   663→
+   664→Stage Summary:
+   665→Files created (4 routes):
+   666→- src/app/api/v1/portfolio/route.ts                       (GET + POST)
+   667→- src/app/api/v1/portfolio/[id]/route.ts                  (PATCH + DELETE)
+   668→- src/app/api/v1/risk/summary/route.ts                    (GET RiskSummary)
+   669→- src/app/api/v1/risk/position-size/route.ts              (POST sizing)
+   670→
+   671→Key decisions:
+   672→- Equity definition: totalEquity = costBasis + unrealizedPnl. This is
+   673→  the standard "what you put in + what the market gave you back" view.
+   674→  Cost basis always counts (even for positions whose live quote fails);
+   675→  unrealizedPnl skips nulls (treated as 0). Documented inline.
+   676→- totalExposure only counts mark-to-market-able positions (skip null
+   677→  marketValue). This means a portfolio with a large failed-quote
+   678→  position will show a low exposurePct — honest, and the frontend can
+   679→  cross-reference with /portfolio to show "Source unavailable" per row.
+   680→- perPosition.marketValue is number (not nullable) per the RiskSummary
+   681→  type in src/lib/types.ts. When a quote fails, marketValue=0,
+   682→  weightPct=0, pnlPct=0. The /portfolio GET endpoint carries the
+   683→  explicit null + error per position; the frontend should use that for
+   684→  per-row error display and use /risk/summary for the aggregated view.
+   685→- VaR requires ≥2 positions with return series (per spec example). With
+   686→  1 position only, VaR is null even if its own series is well-formed —
+   687→  this is a conservative choice the frontend should know about. Could
+   688→  be relaxed later if single-position VaR is desired.
+   689→- Correlation matrix only includes pairs where BOTH instruments have a
+   690→  return series (≥5 log-returns). Self-pairs (a==a) explicitly value=1
+   691→  (trivial, no helper call). Cross-pairs are time-aligned via
+   692→  two-pointer intersection before being passed to `correlation()`.
+   693→- Drawdown reconstructed from costBasis × cumprod(1+r) using log returns
+   694→  for the portfolio aggregate. Daily log returns are small (<0.05), so
+   695→  1+r ≈ exp(r) and the reconstructed equity curve shape is correct.
+   696→  drawdown is returned as a percentage (negative or zero).
+   697→- RiskSnapshot persistence is fire-and-forget with `.catch()` to never
+   698→  break the read path (matches the data-health log pattern).
+   699→- POST/PATCH responses intentionally return null market fields rather
+   700→  than re-fetching live quotes — keeps the write cheap & decoupled from
+   701→  rate-limited upstreams; the next GET /portfolio enriches live.
+   702→- All datetime fields returned as epoch ms at the API boundary (Prisma
+   703→  Date → .getTime()), matching the 2-a/2-b convention.
+   704→
+   705→Response shapes the frontend agent should consume (TypeScript interfaces):
+   706→
+   707→```ts
+   708→// GET /api/v1/portfolio
+   709→data: PositionWithMarket[]
+   710→type PositionWithMarket = {
+   711→  id: string;
+   712→  instrumentId: string;
+   713→  instrument: Instrument;        // { id, assetClass, ticker, symbol, name,
+   714→                                 //   exchange, currency, source, lotSize, metadata }
+   715→  side: "LONG" | "SHORT";
+   716→  entryPrice: number;
+   717→  size: number;
+   718→  openedAt: number;              // epoch ms
+   719→  note: string | null;
+   720→  createdAt: number;             // epoch ms
+   721→  updatedAt: number;             // epoch ms
+   722→  // Computed from live quote; ALL null when quote fetch failed (error set):
+   723→  lastPrice: number | null;
+   724→  marketValue: number | null;    // size × lastPrice (notional current value)
+   725→  unrealizedPnl: number | null;  // (last-entry)×size LONG | (entry-last)×size SHORT
+   726→  unrealizedPnlPct: number | null; // (pnl / cost) × 100
+   727→  error?: string;                // present only when live quote fetch failed
+   728→                                 // (e.g. "HTTP 429")
+   729→};
+   730→
+   731→// POST /api/v1/portfolio            PATCH /api/v1/portfolio/[id]
+   732→// (both return a single object; market fields are null — caller refetches
+   733→//  via GET for live enrichment)
+   734→data: PositionWithMarket           // (market fields all null on write responses)
+   735→
+   736→// Body (POST):  { instrumentId, side:"LONG"|"SHORT", entryPrice>0,
+   737→//                 size>0, openedAt?(epoch ms|ISO), note? }
+   738→// Body (PATCH): { entryPrice?, size?, side?, note? }   (any subset)
+   739→
+   740→// DELETE /api/v1/portfolio/[id]
+   741→data: true
+   742→
+   743→// GET /api/v1/risk/summary
+   744→data: RiskSummary
+   745→type RiskSummary = {
+   746→  totalEquity: number;            // costBasis + unrealizedPnl
+   747→  totalExposure: number;          // Σ marketValue (skip nulls)
+   748→  exposurePct: number;            // totalExposure / totalEquity × 100
+   749→  realizedPnl: number;            // 0 in this phase (no closed trades)
+   750→  unrealizedPnl: number;          // Σ per-position pnl (skip nulls)
+   751→  perAssetClass: {
+   752→    assetClass: "CRYPTO"|"EQUITY"|"FOREX"|"COMMODITY";
+   753→    exposure: number;             // Σ marketValue in class (0 if all failed)
+   754→    pct: number;                  // exposure / totalExposure × 100
+   755→    count: number;                // # positions in class
+   756→  }[];
+   757→  perPosition: {
+   758→    instrumentId: string;
+   759→    symbol: string;
+   760→    assetClass: "CRYPTO"|"EQUITY"|"FOREX"|"COMMODITY";
+   761→    marketValue: number;          // 0 when quote failed
+   762→    weightPct: number;            // marketValue / totalExposure × 100
+   763→    pnlPct: number;               // 0 when quote failed
+   764→  }[];
+   765→  varEstimate: number | null;     // 95% parametric VaR, USD; null if
+   766→                                  // <2 positions have returns OR n<10
+   767→                                  // OR std=0
+   768→  currentDrawdown: number | null; // % (negative or 0); null if
+   769→                                  // insufficient data
+   770→  maxDrawdown: number | null;     // % (most negative dd over series)
+   771→  correlation: CorrelationCell[]; // flat list, self-pairs value=1,
+   772→                                  // cross-pairs value|null
+   773→};
+   774→type CorrelationCell = {
+   775→  a: string;                      // symbol
+   776→  b: string;                      // symbol
+   777→  value: number | null;           // -1..1 ; null if <5 overlapping points
+   778→};
+   779→provenance: { source:"multi", sourceLabel:"Multi-source (live)",
+   780→              syncedAt: number }
+   781→
+   782→// POST /api/v1/risk/position-size
+   783→// Body: { equity>0, riskPct, entryPrice>0, stopPrice>0, side?:"LONG"|"SHORT" }
+   784→data: {
+   785→  equity: number;
+   786→  riskPct: number;
+   787→  riskAmount: number;        // equity × riskPct/100
+   788→  entryPrice: number;
+   789→  stopPrice: number;
+   790→  perUnitRisk: number;       // |entryPrice - stopPrice|
+   791→  positionSize: number;      // riskAmount / perUnitRisk  (units to hold)
+   792→  positionValue: number;     // positionSize × entryPrice
+   793→  side: "LONG" | "SHORT";    // default "LONG"
+   794→}
+   795→// 400 if stopPrice == entryPrice ("Stop price cannot equal entry price")
+   796→// 400 if any numeric input is non-finite or ≤0
+   797→```
+   798→
+   799→Lint issues: none. `bun run lint` exits 0.
+   800→
+   801→Notes for the frontend agent:
+   802→- Polling strategy:
+   803→  • GET /api/v1/portfolio every 15–30s for the positions table — fast
+   804→    (concurrent quotes, no candles).
+   805→  • GET /api/v1/risk/summary every 30–60s — heavier (concurrent quotes
+   806→    + concurrent 3m candle fetches per position). On a 3-position crypto
+   807→    portfolio the end-to-end latency observed was ~1.3s; expect more with
+   808→    Yahoo instruments (HTTP 429 retries add ~6s per Yahoo instrument).
+   809→  • POST /api/v1/risk/position-size is on-demand (form submit).
+   810→- Integrity handling (CRITICAL):
+   811→  • A position row in GET /portfolio whose live quote failed will have
+   812→    lastPrice/marketValue/unrealizedPnl/unrealizedPnlPct all === null
+   813→    AND an `error` string field present (e.g. "HTTP 429"). Render that
+   814→    row with a "Source unavailable" badge and dim the PnL column — do
+   815→    NOT treat null as 0 or hide the row.
+   816→  • In GET /risk/summary, the same failed-quote position contributes 0
+   817→    (not null) to perPosition.marketValue/weightPct/pnlPct AND its cost
+   818→    basis still counts toward totalEquity. So a portfolio with a large
+   819→    failed-quote position will show a low exposurePct — that's correct
+   820→    and honest. Cross-reference /portfolio for per-row error display.
+   821→- Yahoo instruments (EQUITY/FOREX/COMMODITY) will frequently surface
+   822→  HTTP 429 in the per-position `error` field of /portfolio AND be
+   823→  excluded from the correlation matrix in /risk/summary (since they
+   824→  have no return series). Render them with a "Source unavailable"
+   825→  badge without hiding the successful crypto rows.
+   826→- VaR is null when fewer than 2 positions have a usable return series
+   827→  (e.g. only 1 crypto position) OR insufficient data points. Show
+   828→  "Insufficient data" rather than 0 in that case.
+   829→- Drawdown is returned as a percentage (negative or zero). The frontend
+   830→  should compare currentDrawdown against a user-configurable threshold
+   831→  (e.g. -10%) for the alert badge per FR-3.4 (alert UI logic is on the
+   832→  frontend in this phase; no server-side alert is raised).
+   833→- Correlation matrix is a flat list (not a 2D array). Self-pairs
+   834→  (a==a) are included with value 1. Cross-pairs may have value=null
+   835→  when overlap is <5 points — render as "—" in the matrix cell.
+   836→- RiskSnapshot rows are persisted on every /risk/summary call (fire-
+   837→  and-forget). The frontend can later add a GET /risk/snapshots route
+   838→  to chart the equity/drawdown/VaR time series — that route is not in
+   839→  this task's scope but the data is being collected.
+   840→- All epoch times are returned in milliseconds.
+   841→
+   842→---
+   843→Task ID: 5 (kickoff)
+   844→Agent: main (orchestrator)
+   845→Task: Implement the 8 prioritized PRD gaps + fix "sandbox is inactive" (root cause: dev server was stopped).
+   846→
+   847→Work Log:
+   848→- Diagnosed "sandbox is inactive": dev server (`next dev -p 3000`) was not running → restarted, HTTP 200 confirmed.
+   849→- Installed deps: bcryptjs, otplib, ccxt, node-telegram-bot-api (+ types).
+   850→- Created `mini-services/ws-prices/` (socket.io mini-service scaffold, port 3001).
+   851→- Will dispatch parallel subagents for items 1-7; Fase 4 (item 8) last after §16.12 checklist.
+   852→
+   853→Stage Summary:
+   854→- Dev server running. Deps installed. Ready for parallel implementation.
+   855→

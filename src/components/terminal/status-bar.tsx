@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { useMarketSummary, useHealth } from "@/lib/api-client";
+import { useLivePrices } from "@/hooks/use-live-prices";
 import { fmtClock, fmtPct, SOURCE_LABELS } from "@/lib/format";
-import { Wifi, WifiOff, Loader2, TrendingUp, TrendingDown } from "lucide-react";
+import { Wifi, WifiOff, Loader2, TrendingUp, TrendingDown, Radio } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const SOURCE_ORDER = ["binance", "yahoo", "coingecko"] as const;
@@ -11,6 +12,7 @@ const SOURCE_ORDER = ["binance", "yahoo", "coingecko"] as const;
 export function StatusBar() {
   const summary = useMarketSummary();
   const health = useHealth();
+  const live = useLivePrices();
   const [now, setNow] = useState(Date.now());
 
   useEffect(() => {
@@ -104,13 +106,36 @@ export function StatusBar() {
         })}
       </div>
 
-      {/* Clock */}
-      <div className="flex items-center gap-2 shrink-0">
+      {/* Clock + WS status */}
+      <div className="flex items-center gap-3 shrink-0">
+        <WsIndicator status={live.status} />
+        <Divider />
         <span className="text-[10px] uppercase tracking-wider text-[#8891a0]">WIB</span>
         <span className="text-xs tabular text-[#e7e9ec]">{fmtClock(now)}</span>
         <span className="h-1.5 w-1.5 rounded-full bg-[#2e9e6d] animate-live-pulse" />
       </div>
     </header>
+  );
+}
+
+function WsIndicator({ status }: { status: "connecting" | "connected" | "disconnected" }) {
+  const cfg =
+    status === "connected"
+      ? { color: "text-[#2e9e6d]", bg: "bg-[#2e9e6d]", label: "WS LIVE" }
+      : status === "connecting"
+        ? { color: "text-[#d4a02a]", bg: "bg-[#d4a02a]", label: "WS …" }
+        : { color: "text-[#c7484b]", bg: "bg-[#c7484b]", label: "WS OFF" };
+  return (
+    <div className="flex items-center gap-1.5" title={`WebSocket: ${status}`}>
+      {status === "connecting" ? (
+        <Loader2 className={cn("h-3 w-3 animate-spin", cfg.color)} />
+      ) : status === "connected" ? (
+        <Radio className={cn("h-3 w-3", cfg.color)} />
+      ) : (
+        <WifiOff className={cn("h-3 w-3", cfg.color)} />
+      )}
+      <span className={cn("text-[10px] uppercase tracking-wider", cfg.color)}>{cfg.label}</span>
+    </div>
   );
 }
 

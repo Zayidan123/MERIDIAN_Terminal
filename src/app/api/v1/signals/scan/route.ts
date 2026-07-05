@@ -17,6 +17,7 @@ import { db } from "@/lib/db";
 import { ok, fail } from "@/lib/api";
 import { getCandles } from "@/lib/data-sources";
 import { snapshot, volumeZScore, returnsStats } from "@/lib/indicators";
+import { notifySignal } from "@/lib/notifications/telegram";
 import type { AssetClass, Candle, DataSourceKey, Instrument } from "@/lib/types";
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
@@ -271,6 +272,22 @@ export async function POST() {
             context: d.context,
             signalEventId: created.id,
           });
+
+          // PRD FR-2.3 — fire-and-forget Telegram notification. WARN/CRITICAL
+          // only (VOLUME_SPIKE/BREAKOUT are INFO; user can filter in Telegram).
+          // Never awaited, never throws (notifications must not break the path).
+          if (d.severity === "WARN" || d.severity === "CRITICAL") {
+            void notifySignal({
+              instrumentSymbol: instrument.symbol,
+              assetClass: instrument.assetClass,
+              signalType: d.signalType,
+              severity: d.severity,
+              message: d.message,
+              priceAtEvent: d.priceAtEvent,
+            }).catch((e) =>
+              console.warn("[telegram] notifySignal error:", e)
+            );
+          }
         }
       } catch (err) {
         skipped.push({

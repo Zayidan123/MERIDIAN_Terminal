@@ -8,6 +8,7 @@ export type ModuleKey =
   | "signals"
   | "risk"
   | "portfolio"
+  | "execution"
   | "sources";
 
 interface TerminalState {

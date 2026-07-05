@@ -1,0 +1,305 @@
+   700→  than re-fetching live quotes — keeps the write cheap & decoupled from
+   701→  rate-limited upstreams; the next GET /portfolio enriches live.
+   702→- All datetime fields returned as epoch ms at the API boundary (Prisma
+   703→  Date → .getTime()), matching the 2-a/2-b convention.
+   704→
+   705→Response shapes the frontend agent should consume (TypeScript interfaces):
+   706→
+   707→```ts
+   708→// GET /api/v1/portfolio
+   709→data: PositionWithMarket[]
+   710→type PositionWithMarket = {
+   711→  id: string;
+   712→  instrumentId: string;
+   713→  instrument: Instrument;        // { id, assetClass, ticker, symbol, name,
+   714→                                 //   exchange, currency, source, lotSize, metadata }
+   715→  side: "LONG" | "SHORT";
+   716→  entryPrice: number;
+   717→  size: number;
+   718→  openedAt: number;              // epoch ms
+   719→  note: string | null;
+   720→  createdAt: number;             // epoch ms
+   721→  updatedAt: number;             // epoch ms
+   722→  // Computed from live quote; ALL null when quote fetch failed (error set):
+   723→  lastPrice: number | null;
+   724→  marketValue: number | null;    // size × lastPrice (notional current value)
+   725→  unrealizedPnl: number | null;  // (last-entry)×size LONG | (entry-last)×size SHORT
+   726→  unrealizedPnlPct: number | null; // (pnl / cost) × 100
+   727→  error?: string;                // present only when live quote fetch failed
+   728→                                 // (e.g. "HTTP 429")
+   729→};
+   730→
+   731→// POST /api/v1/portfolio            PATCH /api/v1/portfolio/[id]
+   732→// (both return a single object; market fields are null — caller refetches
+   733→//  via GET for live enrichment)
+   734→data: PositionWithMarket           // (market fields all null on write responses)
+   735→
+   736→// Body (POST):  { instrumentId, side:"LONG"|"SHORT", entryPrice>0,
+   737→//                 size>0, openedAt?(epoch ms|ISO), note? }
+   738→// Body (PATCH): { entryPrice?, size?, side?, note? }   (any subset)
+   739→
+   740→// DELETE /api/v1/portfolio/[id]
+   741→data: true
+   742→
+   743→// GET /api/v1/risk/summary
+   744→data: RiskSummary
+   745→type RiskSummary = {
+   746→  totalEquity: number;            // costBasis + unrealizedPnl
+   747→  totalExposure: number;          // Σ marketValue (skip nulls)
+   748→  exposurePct: number;            // totalExposure / totalEquity × 100
+   749→  realizedPnl: number;            // 0 in this phase (no closed trades)
+   750→  unrealizedPnl: number;          // Σ per-position pnl (skip nulls)
+   751→  perAssetClass: {
+   752→    assetClass: "CRYPTO"|"EQUITY"|"FOREX"|"COMMODITY";
+   753→    exposure: number;             // Σ marketValue in class (0 if all failed)
+   754→    pct: number;                  // exposure / totalExposure × 100
+   755→    count: number;                // # positions in class
+   756→  }[];
+   757→  perPosition: {
+   758→    instrumentId: string;
+   759→    symbol: string;
+   760→    assetClass: "CRYPTO"|"EQUITY"|"FOREX"|"COMMODITY";
+   761→    marketValue: number;          // 0 when quote failed
+   762→    weightPct: number;            // marketValue / totalExposure × 100
+   763→    pnlPct: number;               // 0 when quote failed
+   764→  }[];
+   765→  varEstimate: number | null;     // 95% parametric VaR, USD; null if
+   766→                                  // <2 positions have returns OR n<10
+   767→                                  // OR std=0
+   768→  currentDrawdown: number | null; // % (negative or 0); null if
+   769→                                  // insufficient data
+   770→  maxDrawdown: number | null;     // % (most negative dd over series)
+   771→  correlation: CorrelationCell[]; // flat list, self-pairs value=1,
+   772→                                  // cross-pairs value|null
+   773→};
+   774→type CorrelationCell = {
+   775→  a: string;                      // symbol
+   776→  b: string;                      // symbol
+   777→  value: number | null;           // -1..1 ; null if <5 overlapping points
+   778→};
+   779→provenance: { source:"multi", sourceLabel:"Multi-source (live)",
+   780→              syncedAt: number }
+   781→
+   782→// POST /api/v1/risk/position-size
+   783→// Body: { equity>0, riskPct, entryPrice>0, stopPrice>0, side?:"LONG"|"SHORT" }
+   784→data: {
+   785→  equity: number;
+   786→  riskPct: number;
+   787→  riskAmount: number;        // equity × riskPct/100
+   788→  entryPrice: number;
+   789→  stopPrice: number;
+   790→  perUnitRisk: number;       // |entryPrice - stopPrice|
+   791→  positionSize: number;      // riskAmount / perUnitRisk  (units to hold)
+   792→  positionValue: number;     // positionSize × entryPrice
+   793→  side: "LONG" | "SHORT";    // default "LONG"
+   794→}
+   795→// 400 if stopPrice == entryPrice ("Stop price cannot equal entry price")
+   796→// 400 if any numeric input is non-finite or ≤0
+   797→```
+   798→
+   799→Lint issues: none. `bun run lint` exits 0.
+   800→
+   801→Notes for the frontend agent:
+   802→- Polling strategy:
+   803→  • GET /api/v1/portfolio every 15–30s for the positions table — fast
+   804→    (concurrent quotes, no candles).
+   805→  • GET /api/v1/risk/summary every 30–60s — heavier (concurrent quotes
+   806→    + concurrent 3m candle fetches per position). On a 3-position crypto
+   807→    portfolio the end-to-end latency observed was ~1.3s; expect more with
+   808→    Yahoo instruments (HTTP 429 retries add ~6s per Yahoo instrument).
+   809→  • POST /api/v1/risk/position-size is on-demand (form submit).
+   810→- Integrity handling (CRITICAL):
+   811→  • A position row in GET /portfolio whose live quote failed will have
+   812→    lastPrice/marketValue/unrealizedPnl/unrealizedPnlPct all === null
+   813→    AND an `error` string field present (e.g. "HTTP 429"). Render that
+   814→    row with a "Source unavailable" badge and dim the PnL column — do
+   815→    NOT treat null as 0 or hide the row.
+   816→  • In GET /risk/summary, the same failed-quote position contributes 0
+   817→    (not null) to perPosition.marketValue/weightPct/pnlPct AND its cost
+   818→    basis still counts toward totalEquity. So a portfolio with a large
+   819→    failed-quote position will show a low exposurePct — that's correct
+   820→    and honest. Cross-reference /portfolio for per-row error display.
+   821→- Yahoo instruments (EQUITY/FOREX/COMMODITY) will frequently surface
+   822→  HTTP 429 in the per-position `error` field of /portfolio AND be
+   823→  excluded from the correlation matrix in /risk/summary (since they
+   824→  have no return series). Render them with a "Source unavailable"
+   825→  badge without hiding the successful crypto rows.
+   826→- VaR is null when fewer than 2 positions have a usable return series
+   827→  (e.g. only 1 crypto position) OR insufficient data points. Show
+   828→  "Insufficient data" rather than 0 in that case.
+   829→- Drawdown is returned as a percentage (negative or zero). The frontend
+   830→  should compare currentDrawdown against a user-configurable threshold
+   831→  (e.g. -10%) for the alert badge per FR-3.4 (alert UI logic is on the
+   832→  frontend in this phase; no server-side alert is raised).
+   833→- Correlation matrix is a flat list (not a 2D array). Self-pairs
+   834→  (a==a) are included with value 1. Cross-pairs may have value=null
+   835→  when overlap is <5 points — render as "—" in the matrix cell.
+   836→- RiskSnapshot rows are persisted on every /risk/summary call (fire-
+   837→  and-forget). The frontend can later add a GET /risk/snapshots route
+   838→  to chart the equity/drawdown/VaR time series — that route is not in
+   839→  this task's scope but the data is being collected.
+   840→- All epoch times are returned in milliseconds.
+   841→
+   842→---
+   843→Task ID: 5 (kickoff)
+   844→Agent: main (orchestrator)
+   845→Task: Implement the 8 prioritized PRD gaps + fix "sandbox is inactive" (root cause: dev server was stopped).
+   846→
+   847→Work Log:
+   848→- Diagnosed "sandbox is inactive": dev server (`next dev -p 3000`) was not running → restarted, HTTP 200 confirmed.
+   849→- Installed deps: bcryptjs, otplib, ccxt, node-telegram-bot-api (+ types).
+   850→- Created `mini-services/ws-prices/` (socket.io mini-service scaffold, port 3001).
+   851→- Will dispatch parallel subagents for items 1-7; Fase 4 (item 8) last after §16.12 checklist.
+   852→
+   853→Stage Summary:
+   854→- Dev server running. Deps installed. Ready for parallel implementation.
+   855→
+   856→---
+   857→Task ID: 5-1+5-2
+   858→Agent: full-stack-developer (security hardening)
+   859→Task: Auth (NextAuth+bcrypt+TOTP) + CSP/CSRF/rate-limit middleware + institutional login screen
+   860→
+   861→Work Log:
+   862→- Read worklog (Tasks 1, 2-a/b/c, 3, 5-kickoff) and existing files (page.tsx, providers.tsx, next.config.ts, .env, api-client.ts, instruments route, health route, app-shell, globals.css).
+   863→- Created `src/lib/auth.config.ts` — NextAuth v4 options:
+   864→  • Credentials provider with email + password (+ optional TOTP).
+   865→  • `MERIDIAN_ADMIN_PASSWORD_HASH` (bcrypt) wins; else auto-hash `MERIDIAN_ADMIN_PASSWORD` (bcryptjs, cost 10, cached at module scope); else fall back to default `Meridian@2025` with a loud server-console warning banner.
+   866→  • TOTP via otplib v13 `OTP` class (note: otplib v13 dropped the v12 `authenticator` singleton — switched to `new OTP({ strategy:'totp' })` + `verify({token,secret,epochTolerance:30})` + `generateURI({issuer,label,secret})`). TOTP only enforced when `MERIDIAN_TOTP_SECRET` env set.
+   867→  • JWT session, maxAge 8h, rolling refresh. Session cookie httpOnly + SameSite=Lax (+ `__Secure-` prefix in prod).
+   868→  • `NEXTAUTH_SECRET` from env (warns + uses dev default if missing/short).
+   869→  • Callbacks propagate email through JWT → session.
+   870→  • `pages.signIn = "/"` (login is rendered inline, no separate route).
+   871→- Created `src/app/api/auth/[...nextauth]/route.ts` — exports GET/POST from `NextAuth(authOptions)`.
+   872→- Created `src/lib/auth.ts` — `getSession()` + `requireAuth()` (throws `UnauthorizedError` with `status:401`) + class export for typed catches.
+   873→- Updated `src/components/providers.tsx` — wraps children in `<SessionProvider>` (next-auth/react) then `<QueryClientProvider>` (kept existing QueryClient config).
+   874→- Updated `src/app/page.tsx` — `<Providers><Gate/></Providers>` where `Gate` uses `useSession()`: loading→dark spinner; unauthenticated→`<LoginScreen/>`; authenticated→`<AppShell/>`. (SessionProvider must wrap Gate so useSession works.)
+   875→- Created `src/components/terminal/login-screen.tsx` — institutional dark card on #0b0e13/#151920/#262b33 palette matching the terminal. Email + password (+ TOTP field gated by `NEXT_PUBLIC_TOTP_ENABLED==='1'`). Submits via `signIn('credentials', {redirect:false})`, on error toasts; on success reloads so SessionProvider refetches. Footer note "Single-user terminal · credentials from env" + configured admin email hint from `NEXT_PUBLIC_ADMIN_EMAIL`.
+   876→- Created `src/app/api/auth/totp-setup/route.ts` — `GET`, requires auth via `requireAuth()`. If `MERIDIAN_TOTP_SECRET` set → `{enabled:true}`. Else generates fresh base32 secret + otpauth URL via otplib v13. User must persist secret + set `NEXT_PUBLIC_TOTP_ENABLED=1` + restart.
+   877→- Created `src/middleware.ts` (Next.js 16 — runs as deprecated `middleware` but still functional; logs a deprecation hint, no behavior impact):
+   878→  • Applies security headers to ALL matched routes: CSP (`default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' wss: ws: https:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'`), X-Content-Type-Options nosniff, X-Frame-Options DENY, Referrer-Policy strict-origin-when-cross-origin, Permissions-Policy camera/mic/geo off, HSTS 1y.
+   879→  • Auth gate via `next-auth/jwt` `getToken()`: only `/api/v1/health` is public; all other `/api/v1/*` require a valid JWT cookie, else `401 {ok:false,error:'Unauthorized'}`.
+   880→  • Rate-limit: in-memory sliding window per IP (`x-forwarded-for` → `x-real-ip` → 'unknown'), 120 req/min on `/api/v1/*`. On exceed → `429 {ok:false,error:'Rate limit exceeded'}` + `Retry-After`. X-RateLimit-Remaining/Limit on success.
+   881→  • CSRF: for POST/PUT/PATCH/DELETE on `/api/v1/*`, validates same-origin via `Origin` header host vs request `Host` (or `X-Requested-With: XMLHttpRequest` opt-in). Mismatch → `403 {ok:false,error:'CSRF check failed'}`.
+   882→  • Matcher excludes `_next/static`, `_next/image`, `favicon.ico`, `logo.svg`, `robots.txt` (those get headers from next.config.ts fallback).
+   883→- Updated `next.config.ts` — added async `headers()` returning the same security headers as a static fallback for static assets that bypass middleware. Kept existing config (output:standalone, ignoreBuildErrors, reactStrictMode:false).
+   884→- Updated `.env` — appended documented auth block (kept `DATABASE_URL`): `MERIDIAN_ADMIN_EMAIL=admin@meridian.local`, `MERIDIAN_ADMIN_PASSWORD=Meridian@2025`, `MERIDIAN_ADMIN_PASSWORD_HASH=` (empty → auto-hash), `MERIDIAN_TOTP_SECRET=` (empty → 2FA off), `NEXT_PUBLIC_TOTP_ENABLED=0`, `NEXT_PUBLIC_ADMIN_EMAIL=admin@meridian.local`, `NEXTAUTH_SECRET=meridian-dev-secret-change-in-production-32charsmin`, `NEXTAUTH_URL=http://localhost:3000`. Added top-of-file comment block warning to change password in production.
+   885→- Lint: `bun run lint` → 0 errors, 0 warnings (after removing 6 unused `eslint-disable no-console` directives — `no-console` is already off in the project's eslint config).
+   886→
+   887→Verification (curl, dev server on :3000):
+   888→- `GET /api/v1/instruments` no cookie → **401** `{"ok":false,"error":"Unauthorized"}` ✅
+   889→- `GET /api/v1/health` no cookie → **200** (public) ✅
+   890→- All other `/api/v1/*` (watchlist, portfolio, alerts, signals, risk/summary, market-summary, quotes) no cookie → **401** ✅
+   891→- Security headers present on `/` (CSP, X-Content-Type-Options, X-Frame-Options DENY, Referrer-Policy, Permissions-Policy, HSTS) ✅
+   892→- Login flow: GET /api/auth/csrf → POST /api/auth/callback/credentials (email=admin@meridian.local, password=Meridian@2025) → 200, `next-auth.session-token` cookie set (httpOnly, SameSite=Lax) ✅
+   893→- GET /api/auth/session with cookie → `{user:{name:'Admin',email:'admin@meridian.local'},expires:<+8h>}` ✅
+   894→- GET /api/v1/instruments with cookie → **200** (real instrument data returned) ✅
+   895→- POST /api/v1/seed with cookie + same-host Origin → **200** `{ok:true,data:{seeded:true}}` ✅
+   896→- POST /api/v1/seed with cookie + wrong Origin (http://evil.example.com) → **403** `{"ok":false,"error":"CSRF check failed"}` ✅
+   897→- GET /api/auth/totp-setup with cookie → **200** `{enabled:false, secret, otpauthUrl}` ✅
+   898→- Root page `/` renders without server error (HTTP 200, title correct) ✅
+   899→
+   900→Stage Summary:
+   901→- Files created: `src/lib/auth.config.ts`, `src/lib/auth.ts`, `src/app/api/auth/[...nextauth]/route.ts`, `src/app/api/auth/totp-setup/route.ts`, `src/components/terminal/login-screen.tsx`, `src/middleware.ts`.
+   902→- Files modified: `src/components/providers.tsx`, `src/app/page.tsx`, `next.config.ts`, `.env`.
+   903→- Existing `/api/v1/*` route handlers (instruments, watchlist, prices, quotes, technicals, fundamentals, market-summary, health, alerts, signals, portfolio, risk, seed) were NOT modified — middleware enforces auth/CSRF/rate-limit around them.
+   904→- Default login credentials (from .env): **email `admin@meridian.local` · password `Meridian@2025`**. TOTP disabled by default (`MERIDIAN_TOTP_SECRET` empty, `NEXT_PUBLIC_TOTP_ENABLED=0`).
+   905→- Protected: all `/api/v1/*` except `/api/v1/health` (public for unauth health checks). `/api/auth/*` is intentionally not auth-checked (NextAuth handles its own session bootstrapping). Root `/` page renders LoginScreen when unauthenticated, AppShell when authenticated — no separate `/login` route (system rule honored).
+   906→- To enable 2FA later: as the admin, `GET /api/auth/totp-setup` (returns secret + otpauth URL) → scan in authenticator app → set `MERIDIAN_TOTP_SECRET=<secret>` + `NEXT_PUBLIC_TOTP_ENABLED=1` in `.env` → restart. Login screen will then show the TOTP field and `authorize()` will verify the code.
+   907→- Lint: clean (0 errors / 0 warnings).
+   908→
+   909→---
+   910→Task ID: 5-3
+   911→Agent: full-stack-developer (WebSocket)
+   912→Task: Implement PRD FR-0.1 real-time price streaming — a socket.io mini-service on port 3001 that aggregates client subscriptions into a single upstream Binance combined trade-stream WS (crypto) + a Yahoo Finance 15s poller (IDX .JK, forex =X, gold GC=F), and a React hook + QuoteTable/StatusBar integration that overlays live ticks on top of the existing React Query polled quotes with flash-up/flash-down animation and a LIVE pulse dot.
+   913→
+   914→Work Log:
+   915→- Read worklog (Tasks 1, 2-a/b/c, 3, 5-kickoff, 5-1+5-2 security) and existing files (quote-table.tsx, status-bar.tsx, yahoo.ts, globals.css, api-client.ts, examples/websocket/{server,frontend}, Caddyfile).
+   916→- Wrote `mini-services/ws-prices/index.ts` (port 3001, socket.io v4 server, self-contained — imports ONLY socket.io + node:http + bun globals):
+   917→  • Client registry: `Map<socketId, Set<ticker>>`. Per-symbol last-price cache so a newly-subscribing client immediately receives the latest tick.
+   918→  • Symbol classification: `isCryptoSymbol()` — Yahoo markers (`.JK`, `=X`, `GC=F`) → Yahoo; otherwise Binance trade stream (uppercase alnum, e.g. `BTCUSDT`).
+   919→  • Binance combined stream: `wss://stream.binance.com:9443/stream?streams=btcusdt@trade/ethusdt@trade/...` (lowercase). ONE upstream connection for the UNION of all subscribed crypto symbols across all clients. On trade message: parse `{stream, data:{s, p, T}}`, broadcast `{ticker, price, time}` to subscribed clients.
+   920→  • Reconcile-on-change: when the aggregated crypto symbol set changes (client subscribe/unsubscribe/disconnect), the existing upstream is torn down and a fresh one opened with the new stream list. Reconnect with exponential backoff (1s → 30s cap) on accidental close; intentional close (set change or shutdown) does not reconnect.
+   921→  • Yahoo poller: 15s default, 60s for 5min after a 429. Polls `https://query2.finance.yahoo.com/v8/finance/chart/{ticker}?range=1d&interval=1m` with Mozilla User-Agent, extracts `meta.regularMarketPrice`. Sequential (parallel triggers 429). Fires one immediate cycle on symbol-set change so the UI doesn't wait 15s for the first tick.
+   922→  • HTTP `/health` returns `{ok, clients, upstreamCrypto, pollingYahoo, yahooBackoff}`.
+   923→  • socket.io server uses the DEFAULT path `/socket.io/` (NOT `path:'/'`) because engine.io prefix-matches the path against every incoming URL — `path:'/'` would match `/health` too and clobber the HTTP response with `{"code":0,"message":"Transport unknown"}`. Caddy is query-only (`XTransformPort`), so it doesn't care which path socket.io uses internally.
+   924→  • CORS: `{ origin: true, credentials: true }` — acceptable for dev (gateway is same-origin from the browser's perspective via XTransformPort).
+   925→  • Resilience: `process.on('SIGPIPE')` swallowed (writing to a closed socket mid-tick was killing the daemon before this was added). `uncaughtException` + `unhandledRejection` log but never crash. SIGTERM/SIGINT cleanly tear down Binance WS + Yahoo timer + io + httpServer before exit.
+   926→  • Connection lifecycle logged to stdout (visible in /tmp/ws-prices.log): client connect/disconnect, subscribe/unsubscribe, Binance upstream connect/close, Yahoo backoff transitions.
+   927→- Installed `socket.io-client@4.8.3` in the main project (`bun add socket.io-client`).
+   928→- Wrote `src/hooks/use-live-prices.ts` (`'use client'`):
+   929→  • Module-level singleton socket — multiple components share one connection. Lazy-init on first consumer mount via `getSocket()`.
+   930→  • Connection: `io({ path: '/socket.io/', transports: ['websocket'], query: { XTransformPort: '3001' } })` — same-origin through Caddy, query-based routing to localhost:3001. NO direct localhost URL.
+   931→  • Status: module-level `socketStatus` + listener set. Hook reads initial state lazily via `useState(() => socketStatus)` (avoids the lint error `react-hooks/set-state-in-effect`). Status updates flow to all consumers via the listener set.
+   932→  • Prices: module-level `prices: Record<ticker, {price, time, flash}>` (mutated in place — same object reference; consumers read latest on re-render). On `price` event: compute flash direction (up if price increased, down if decreased, null if unchanged). Auto-clear flash after 700ms (matches the `.flash-up` / `.flash-down` CSS keyframe duration in globals.css) via per-ticker setTimeout.
+   933→  • Re-render batching: price updates schedule a single `requestAnimationFrame`-batched `setTick` so a burst of ticks doesn't trigger a render storm.
+   934→  • Public API: `{ status, prices, subscribe(symbols), unsubscribe(symbols) }`. `subscribe`/`unsubscribe` emit `subscribe`/`unsubscribe` events to the server. Singleton stays alive on unmount — only the component's subscriptions are dropped.
+   935→- Updated `src/components/terminal/quote-table.tsx`:
+   936→  • Calls `useLivePrices()`. Collects the union of tickers of all visible rows.
+   937→  • On ticker-set change, calls `live.subscribe(tickers)`; on cleanup, `live.unsubscribe(previous)`. The ws-prices service aggregates across all clients so re-subscribing is idempotent.
+   938→  • For each row: if `live.prices[ticker]` exists, renders that price INSTEAD of `quote.price`. `changePct24h`, `high24h`, `low24h`, `volume24h` still come from the polled quote (the WS only gives price ticks).
+   939→  • Flash animation: the price is wrapped in a `<span key={live-${time}} className={cn('inline-block px-1 -mx-1 rounded-sm', flashClass)}>`. The React `key` is the tick timestamp so the span RE-MOUNTS on every fresh tick — this re-triggers the CSS animation on back-to-back up-ticks (without the key change, the `.flash-up` class would stay applied and the animation would only run once for the first tick).
+   940→  • LIVE pulse dot: a tiny 1×1px green dot (`bg-[#2e9e6d] animate-live-pulse`) appears next to the symbol when `live.status === 'connected'` AND a live entry exists for that ticker.
+   941→  • Existing React Query polling (`useQuotes` every 30s) is UNCHANGED — it remains the fallback + source of 24h stats. If WS is disconnected, the polled `quote.price` is shown with no error UI.
+   942→- Updated `src/components/terminal/status-bar.tsx`:
+   943→  • Calls `useLivePrices()` (read-only — does NOT subscribe to symbols here).
+   944→  • Added a `WsIndicator` next to the clock: green `Radio` icon + "WS LIVE" when connected; amber spinner + "WS …" when connecting; red `WifiOff` + "WS OFF" when disconnected. The existing clock pulse dot is preserved.
+   945→- Lint: `bun run lint` exits 0 (1 error + 1 warning fixed: removed `setStatusState(socketStatus)` synchronous call in effect by switching to `useState(() => socketStatus)` lazy initializer; removed unused `eslint-disable-next-line` directive by adding `live` to the effect deps).
+   946→- End-to-end smoke test (bun client → ws-prices service):
+   947→  • Crypto: subscribe `["BTCUSDT","ETHUSDT","SOLUSDT"]` → Binance upstream connects (3 streams) → client receives trade ticks for all three → disconnect cleanly tears down upstream. ✓
+   948→  • Mixed: subscribe `["GC=F","EURUSD=X","BTCUSDT"]` → Binance upstream for BTCUSDT only; Yahoo poller fires immediately for GC=F (gold, $4187.3) and EURUSD=X (forex, 1.144) → all three tickers received. ✓
+   949→  • Service survives multiple sequential client connect/disconnect cycles (the SIGPIPE handler was the fix — before it, the daemon died when a client disconnected mid-tick-stream). ✓
+   950→- Started the service: `cd /home/z/my-project/mini-services/ws-prices && nohup bun index.ts > /tmp/ws-prices.log 2>&1 < /dev/null & disown`. (Used `bun index.ts` instead of `bun --hot index.ts` because `--hot`'s file-watcher parent process was orphaning the actual server child after the launching shell exited — `bun index.ts` keeps the server in the foreground of the daemonized shell. The dev script in package.json is unchanged — `bun --hot index.ts` still works for interactive development.)
+   951→- Verified: `curl -s http://localhost:3001/health` → `{"ok":true,"clients":0,"upstreamCrypto":[],"pollingYahoo":[],"yahooBackoff":false}` ✓
+   952→- Verified: `curl -sI http://localhost:3000/` → `HTTP/1.1 200 OK` (main app still loads; CSP allows `connect-src 'self' wss: ws: https:` so the browser-side socket.io connection is permitted). ✓
+   953→
+   954→Stage Summary:
+   955→Files created:
+   956→- `mini-services/ws-prices/index.ts` — socket.io v4 server on port 3001 (Binance combined trade-stream WS + Yahoo 15s poller + /health HTTP endpoint).
+   957→- `src/hooks/use-live-prices.ts` — singleton socket.io-client hook (`useLivePrices()` → `{status, prices, subscribe, unsubscribe}`).
+   958→
+   959→Files modified:
+   960→- `src/components/terminal/quote-table.tsx` — overlays live WS prices on the Last column with flash-up/flash-down animation; adds a 1×1px green LIVE pulse dot next to the symbol when connected. React Query polling is unchanged (fallback + 24h stats source).
+   961→- `src/components/terminal/status-bar.tsx` — adds a WS status indicator (`WS LIVE` / `WS …` / `WS OFF`) next to the clock.
+   962→- `package.json` — added `socket.io-client@^4.8.3`.
+   963→
+   964→Files NOT touched (per ownership rules):
+   965→- `src/app/page.tsx`, `src/components/providers.tsx`, `src/app/layout.tsx` (security agent).
+   966→- `src/middleware.ts`, `next.config.ts` (security agent).
+   967→- `prisma/schema.prisma` (other agents).
+   968→- `src/app/api/v1/*` route handlers (untouched).
+   969→- `src/lib/api-client.ts` (untouched — kept the hook in `src/hooks/` as instructed).
+   970→
+   971→How to start the service:
+   972→```bash
+   973→cd /home/z/my-project/mini-services/ws-prices && nohup bun index.ts > /tmp/ws-prices.log 2>&1 < /dev/null & disown
+   974→# (use `bun --hot index.ts` for interactive dev with auto-restart on file changes)
+   975→curl -s http://localhost:3001/health
+   976→```
+   977→
+   978→How the frontend connects:
+   979→- `useLivePrices()` (called by `QuoteTable` and `StatusBar`) lazy-inits a singleton `socket.io-client` connection via `io({ path: '/socket.io/', transports: ['websocket'], query: { XTransformPort: '3001' } })` — same-origin through the Caddy gateway (port 81 externally → localhost:3001 based on the `XTransformPort` query). NEVER a direct `localhost:3001` URL.
+   980→- `QuoteTable` collects the tickers of all visible rows and calls `subscribe(tickers)` on mount / ticker-set change; `unsubscribe(previous)` on cleanup.
+   981→- The ws-prices service aggregates subscriptions across ALL connected clients into ONE upstream Binance WS (union of crypto symbols) and ONE Yahoo poller (union of non-crypto symbols), reconnecting the upstream only when the aggregated set changes.
+   982→
+   983→Fallback behavior:
+   984→- If WS is disconnected: `live.prices[ticker]` is undefined → `QuoteTable` falls back to the polled `quote.price` silently (no error UI). The `StatusBar` shows `WS OFF` in red.
+   985→- If a specific ticker has no live entry yet (just subscribed, no tick received): polled `quote.price` is shown until the first tick arrives. The ws-prices service pushes a cached last-price on subscribe (if available) so the live overlay appears immediately for previously-seen tickers.
+   986→- If WS reconnects: the singleton socket.io-client auto-reconnects (infinite attempts, 1s → 10s backoff). On reconnect, `QuoteTable`'s `useEffect` re-runs `subscribe(tickers)` (the dependency `live` changes when status flips back to connected, re-triggering the effect). Actually — `live` is from useMemo with deps `[status, prices, subscribe, unsubscribe]` and `subscribe`/`unsubscribe` are stable, so `live` changes when `status` changes — yes, the effect re-runs on reconnect and re-subscribes. ✓
+   987→- If Binance upstream disconnects (network hiccup): service reconnects with exponential backoff (1s → 30s cap). Clients stay subscribed; ticks resume when upstream reconnects.
+   988→- If Yahoo 429s: poller switches to 60s cadence for 5min, then back to 15s. Clients see stale prices during backoff (no error UI — the last cached price stays).
+   989→
+   990→Flash animation + LIVE indicator mechanism:
+   991→- On each `price` event, the hook compares the new price to the previous cached price for that ticker. If higher → `flash='up'`; if lower → `flash='down'`; if equal → `flash=null`.
+   992→- The flash flag is auto-cleared after 700ms via a per-ticker `setTimeout` (matches the `meridian-flash-up`/`meridian-flash-down` CSS keyframe duration in `globals.css`).
+   993→- In `QuoteTable`, the price `<span>` uses `key={live-${liveEntry.time}}` (the tick timestamp). Because React remounts an element when its key changes, each fresh tick produces a brand-new span with the `.flash-up` or `.flash-down` class freshly applied → the CSS animation runs from scratch. Without the key change, back-to-back up-ticks would leave `.flash-up` applied continuously and the animation would only fire once (CSS animations trigger on class application, not on class persistence).
+   994→- When the flash auto-clears (700ms later), the hook re-renders the consumer; the span's className drops the flash class. The animation has already ended (transparent background), so removing the class is invisible.
+   995→- The LIVE pulse dot is a `<span className="h-1 w-1 rounded-full bg-[#2e9e6d] animate-live-pulse" />` placed next to the symbol. It renders only when `live.status === 'connected'` AND a live entry exists for that ticker — i.e., the user is seeing a real-time price, not a polled fallback. The `animate-live-pulse` class (defined in globals.css) is a 1.8s ease-in-out opacity pulse (1.0 → 0.35 → 1.0).
+   996→- The `StatusBar` WS indicator mirrors the same status: green `Radio` icon + "WS LIVE" (connected), amber `Loader2` spinner + "WS …" (connecting), red `WifiOff` + "WS OFF" (disconnected).
+   997→
+   998→Lint: clean (`bun run lint` exits 0). Mini-service is plain TypeScript run by bun (no separate tsconfig — bun infers types from `bun-types` globally); runtime globals (`WebSocket`, `fetch`, `AbortController`) are bun built-ins, verified via `bun -e 'console.log(typeof WebSocket)'`.
+   999→
+  1000→Mini-service health endpoint: `curl -s http://localhost:3001/health` → `{"ok":true,"clients":0,"upstreamCrypto":[],"pollingYahoo":[],"yahooBackoff":false}` ✓
+  1001→
+  1002→Main app: `curl -sI http://localhost:3000/` → `HTTP/1.1 200 OK` ✓
+  1003→
+  1004→

@@ -12,6 +12,7 @@ import { db } from "@/lib/db";
 import { ok, fail } from "@/lib/api";
 import { getCandles, getQuote } from "@/lib/data-sources";
 import { snapshot, volumeZScore, rsi } from "@/lib/indicators";
+import { notifyAlertTriggered } from "@/lib/notifications/telegram";
 import type {
   AssetClass,
   Candle,
@@ -461,6 +462,19 @@ export async function POST() {
           message,
           signalEventId: signalEvent.id,
         });
+
+        // PRD FR-2.3 — fire-and-forget Telegram notification. Never awaited,
+        // never throws (notifications must not break the data path).
+        void notifyAlertTriggered({
+          instrumentSymbol: instrument.symbol,
+          metric: alert.metric,
+          operator: alert.operator,
+          threshold: alert.threshold,
+          observed: outcome.observed,
+          priceAtEvent: outcome.priceAtEvent,
+        }).catch((e) =>
+          console.warn("[telegram] notifyAlertTriggered error:", e)
+        );
       } catch (err) {
         skipped.push({
           alertId: alert.id,

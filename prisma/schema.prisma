@@ -32,9 +32,39 @@ model Instrument {
   positions          Position[]
   signalEvents       SignalEvent[]
   fundamentals       Fundamental[]
+  candles            PriceOhlcv[]
 }
 
-/// Cached fundamental snapshot for an instrument (equities primarily).
+/// Persisted OHLCV candles (PRD §14 `price_ohlcv`).
+/// Populated as the data layer fetches live candles from real sources —
+/// enables local historical queries / backtesting without re-hitting APIs.
+model PriceOhlcv {
+  // Composite key: one row per (instrument, timeframe, timestamp).
+  // SQLite doesn't support multi-column @id well with @default, so we use a
+  // synthetic cuid id + a unique compound index.
+  id           String   @id @default(cuid())
+  instrumentId String
+  timeframe    String   // "15m" | "1h" | "4h" | "1d" (the interval the candle represents)
+  timestamp    Int      // epoch ms (candle open time)
+  open         Float
+  high         Float
+  low          Float
+  close        Float
+  volume       Float
+  source       String   // "binance" | "yahoo"
+  fetchedAt    DateTime @default(now())
+
+  instrument Instrument @relation(fields: [instrumentId], references: [id], onDelete: Cascade)
+
+  @@unique([instrumentId, timeframe, timestamp])
+  @@index([instrumentId, timeframe, timestamp])
+  @@index([instrumentId, timestamp])
+}
+
+/// Cached fundamental snapshot for an instrument.
+/// Equity fields come from Yahoo Finance (quoteSummary); crypto fields come
+/// from CoinGecko (coins/{id}). Equity-only fields are null for crypto rows
+/// and vice versa.
 model Fundamental {
   id        String   @id @default(cuid())
   ticker    String   @unique
@@ -47,6 +77,12 @@ model Fundamental {
   pbv       Float?
   graham    Float?   // Graham number
   dcfFair   Float?   // simple DCF fair value
+  // Crypto (CoinGecko)
+  marketCap         Float? // USD
+  fdv               Float? // fully diluted valuation, USD
+  circulatingSupply Float?
+  totalSupply       Float?
+  maxSupply         Float?
   source    String
   fetchedAt DateTime @default(now())
 
@@ -134,6 +170,58 @@ model RiskSnapshot {
   maxDrawdown     Float?
   currentDrawdown Float?
   createdAt       DateTime @default(now())
+}
+
+/// Execution bot configuration + state (PRD Fase 4).
+model BotConfig {
+  id           String   @id @default("singleton")
+  mode         String   @default("PAPER") // "PAPER" | "LIVE"
+  killSwitch   Boolean  @default(false)   // manual kill-switch
+  autoKillDd   Float    @default(20)      // auto kill-switch daily drawdown %
+  maxOrderUsd  Float    @default(500)     // hard cap per order (USD notional)
+  maxDailyUsd  Float    @default(2000)    // hard cap per day (USD notional)
+  updatedAt    DateTime @updatedAt
+}
+
+/// Orders — paper & live (PRD FR-4.5, §14 `orders`).
+model Order {
+  id            String    @id @default(cuid())
+  instrumentId  String
+  side          String    // "BUY" | "SELL"
+  type          String    // "MARKET" | "LIMIT"
+  size          Float     // quantity
+  price         Float?    // limit price (null for market)
+  avgFillPrice  Float?    // executed avg price
+  status        String    @default("PENDING") // "PENDING"|"FILLED"|"PARTIAL"|"CANCELLED"|"REJECTED"
+  mode          String    @default("PAPER")    // "PAPER" | "LIVE"
+  exchange      String?   // "binance" etc.
+  exchangeOrderId String? // broker/exchange order id (live only)
+  reason        String?   // rejection reason
+  valueUsd      Float     // notional USD (for cap checks)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  executedAt    DateTime?
+
+  @@index([status])
+  @@index([createdAt])
+  @@index([mode])
+}
+
+/// Tamper-evident audit log for every bot action (PRD §16.10).
+model AuditLog {
+  id        String   @id @default(cuid())
+  action    String   // "ORDER_PLACED"|"ORDER_CANCELLED"|"ORDER_FILLED"|"KILL_SWITCH_ON"|"KILL_SWITCH_OFF"|"MODE_CHANGE"|"CAP_BREACH"|"ANOMALY"
+  message   String
+  contextJson String? // JSON details
+  severity  String   @default("INFO") // "INFO" | "WARN" | "CRITICAL"
+  // Hash-chain field for tamper-evidence: hash of (prevHash + this row's canonical content).
+  // First row's prevHash = "genesis".
+  prevHash  String
+  hash      String
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([action])
 }
 
 /// Provenance / health log for every external data request (PRD FR-0.5).

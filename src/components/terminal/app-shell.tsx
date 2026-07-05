@@ -8,6 +8,7 @@ import { WatchlistView } from "@/components/terminal/watchlist-view";
 import { SignalsView } from "@/components/terminal/signals-view";
 import { RiskView } from "@/components/terminal/risk-view";
 import { PortfolioView } from "@/components/terminal/portfolio-view";
+import { ExecutionView } from "@/components/terminal/execution-view";
 import { SourcesView } from "@/components/terminal/sources-view";
 import { useTerminal, type ModuleKey } from "@/lib/store";
 import { useSeed, useSignalPoller } from "@/lib/api-client";
@@ -20,6 +21,7 @@ const TITLES: Record<ModuleKey, { title: string; sub: string }> = {
   signals: { title: "Signals & Alerts", sub: "Anomaly detection & custom alert rules" },
   risk: { title: "Risk Management", sub: "Exposure · VaR · drawdown · correlation" },
   portfolio: { title: "Portfolio", sub: "Positions & mark-to-market" },
+  execution: { title: "Execution Bot", sub: "Paper & live order execution · PRD Fase 4" },
   sources: { title: "Data Sources", sub: "Provenance & health monitoring" },
 };
 
@@ -70,6 +72,7 @@ export function AppShell() {
             {active === "signals" && <SignalsView />}
             {active === "risk" && <RiskView />}
             {active === "portfolio" && <PortfolioView />}
+            {active === "execution" && <ExecutionView />}
             {active === "sources" && <SourcesView />}
           </div>
 

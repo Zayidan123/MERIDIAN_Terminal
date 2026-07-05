@@ -11,7 +11,7 @@ import {
   useQuotes,
 } from "@/lib/api-client";
 import type { Range, Instrument } from "@/lib/types";
-import { fmtPrice, fmtCompact, fmtInt, fmtPct, ASSET_CLASS_META } from "@/lib/format";
+import { fmtPrice, fmtCompact, fmtPct, fmtTimeAgo, ASSET_CLASS_META } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { X, LineChart } from "lucide-react";
 
@@ -29,7 +29,7 @@ export function InstrumentDetail({
   const technicals = useTechnicals(instrument.id, range);
   const fundamentals = useFundamentals(
     instrument.id,
-    instrument.assetClass === "EQUITY"
+    instrument.assetClass === "EQUITY" || instrument.assetClass === "CRYPTO"
   );
   const quotes = useQuotes();
   const quoteRow = (quotes.data?.quotes ?? []).find((q) => q.instrumentId === instrument.id);
@@ -244,18 +244,56 @@ export function InstrumentDetail({
           instrument.assetClass === "EQUITY"
             ? "Valuation & quality ratios (Yahoo Finance)"
             : instrument.assetClass === "CRYPTO"
-              ? "Not configured for this crypto instrument"
+              ? "Market cap & supply (CoinGecko)"
               : "Not applicable for this asset class"
         }
         loading={fundamentals.isLoading}
         error={null}
         className="mb-1"
       >
-        {instrument.assetClass !== "EQUITY" ? (
+        {instrument.assetClass === "FOREX" || instrument.assetClass === "COMMODITY" ? (
           <div className="flex items-center gap-2 py-3 text-[11px] text-[#8891a0]">
             <LineChart className="h-4 w-4 text-[#4a525c]" />
-            Fundamental analysis is available for IDX equities only in this build.
+            Fundamental analysis is not applicable for this asset class.
           </div>
+        ) : instrument.assetClass === "CRYPTO" ? (
+          fundamentals.isLoading ? (
+            <LoadingState />
+          ) : fundamentals.data ? (
+            <div className="grid grid-cols-2 lg:grid-cols-3 gap-2">
+              <PanelStat
+                label="Market Cap"
+                value={fmtCompact(fundamentals.data.marketCap)}
+                sub="USD"
+                valueColor="#d4a02a"
+              />
+              <PanelStat
+                label="FDV"
+                value={fmtCompact(fundamentals.data.fdv)}
+                sub="fully diluted · USD"
+              />
+              <PanelStat
+                label="Circulating Supply"
+                value={fmtCompact(fundamentals.data.circulatingSupply)}
+              />
+              <PanelStat
+                label="Total Supply"
+                value={fmtCompact(fundamentals.data.totalSupply)}
+              />
+              <PanelStat
+                label="Max Supply"
+                value={fmtCompact(fundamentals.data.maxSupply)}
+              />
+              <PanelStat
+                label="Source"
+                value={fundamentals.data.source === "coingecko" ? "CoinGecko" : fundamentals.data.source}
+                mono={false}
+                sub={fmtTimeAgo(fundamentals.data.fetchedAt)}
+              />
+            </div>
+          ) : (
+            <ErrorState message="CoinGecko rate-limited or unavailable. Retry by selecting another instrument or waiting ~60s." />
+          )
         ) : fundamentals.isLoading ? (
           <LoadingState />
         ) : fundamentals.data ? (

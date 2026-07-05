@@ -1,11 +1,12 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuotes, useWatchlist } from "@/lib/api-client";
 import { AssetBadge, ChangeText } from "@/components/asset-badge";
 import { Sparkline } from "@/components/candlestick-chart";
 import { fmtPrice, fmtCompact } from "@/lib/format";
 import { useTerminal } from "@/lib/store";
+import { useLivePrices } from "@/hooks/use-live-prices";
 import { cn } from "@/lib/utils";
 import { Loader2, ChevronRight } from "lucide-react";
 
@@ -19,6 +20,7 @@ export function QuoteTable({
   const quotes = useQuotes();
   const watchlist = useWatchlist();
   const { selectInstrument } = useTerminal();
+  const live = useLivePrices();
 
   const rows = useMemo(() => {
     const wlMap = new Map((watchlist.data?.items ?? []).map((i) => [i.instrument.id, i.instrument]));
@@ -26,6 +28,31 @@ export function QuoteTable({
     if (filterClass) qs = qs.filter((q) => wlMap.get(q.instrumentId)?.assetClass === filterClass);
     return qs.map((q) => ({ ...q, instrument: wlMap.get(q.instrumentId) }));
   }, [quotes.data, watchlist.data, filterClass]);
+
+  // Union of tickers visible in this table — (re)subscribed to the
+  // ws-prices service on change. The service aggregates across all clients
+  // into a single upstream Binance WS + Yahoo poller, so re-subscribing
+  // with the same set is a cheap idempotent operation.
+  const tickers = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          rows
+            .map((r) => r.ticker)
+            .filter((t): t is string => typeof t === "string" && t.length > 0)
+        )
+      ),
+    [rows]
+  );
+  const tickerKey = tickers.join(",");
+  useEffect(() => {
+    if (tickers.length === 0) return;
+    live.subscribe(tickers);
+    const previous = tickers;
+    return () => {
+      live.unsubscribe(previous);
+    };
+  }, [tickerKey, live]);
 
   if (quotes.isLoading || watchlist.isLoading) {
     return (
@@ -65,6 +92,22 @@ export function QuoteTable({
             if (!inst) return null;
             const q = r.quote;
             const cur = q?.currency ?? inst.currency;
+            // Live price overlay — if the ws-prices service has a fresh tick
+            // for this ticker, prefer it over the polled quote. The polled
+            // quote still supplies changePct24h/high24h/low24h/volume24h.
+            const liveEntry = live.prices[r.ticker];
+            const displayPrice = liveEntry?.price ?? q?.price ?? null;
+            const flashClass =
+              liveEntry?.flash === "up"
+                ? "flash-up"
+                : liveEntry?.flash === "down"
+                  ? "flash-down"
+                  : "";
+            // Use the live tick's `time` as the React key so the flash
+            // animation re-runs on every fresh tick (CSS animations only
+            // fire on class application; without a key change, back-to-back
+            // up-ticks would not retrigger the animation).
+            const liveKey = liveEntry ? `live-${liveEntry.time}` : "static";
             return (
               <tr
                 key={r.instrumentId}
@@ -75,12 +118,33 @@ export function QuoteTable({
                   <AssetBadge assetClass={inst.assetClass} size="xs" />
                 </td>
                 <td className="px-2 py-1.5">
-                  <div className="font-medium text-[#e7e9ec]">{inst.symbol}</div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-medium text-[#e7e9ec]">{inst.symbol}</span>
+                    {liveEntry && live.status === "connected" && (
+                      <span
+                        className="h-1 w-1 rounded-full bg-[#2e9e6d] animate-live-pulse"
+                        title="Live price stream"
+                        aria-label="Live price stream active"
+                      />
+                    )}
+                  </div>
                   <div className="text-[9px] text-[#4a525c] truncate max-w-[120px]">{inst.name}</div>
                 </td>
                 {!compact && (
                   <td className="px-2 py-1.5 text-right tabular">
-                    {q ? fmtPrice(q.price, cur) : <span className="text-[#4a525c]">—</span>}
+                    {displayPrice !== null ? (
+                      <span
+                        key={liveKey}
+                        className={cn(
+                          "inline-block px-1 -mx-1 rounded-sm",
+                          flashClass
+                        )}
+                      >
+                        {fmtPrice(displayPrice, cur)}
+                      </span>
+                    ) : (
+                      <span className="text-[#4a525c]">&mdash;</span>
+                    )}
                   </td>
                 )}
                 <td className="px-2 py-1.5 text-right">
@@ -118,7 +182,6 @@ export function QuoteTable({
 
 /// Fetches a 7d candle series for the sparkline. Uses a tiny inline fetch to
 /// avoid hook rules issues inside a table cell.
-import { useEffect, useState } from "react";
 import type { Candle } from "@/lib/types";
 
 function SparklineTrend({ instrumentId }: { instrumentId: string }) {

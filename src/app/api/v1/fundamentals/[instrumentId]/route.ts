@@ -1,21 +1,23 @@
 // MERIDIAN Terminal — fundamentals for an instrument.
 // PRD §6: 100% real data. We only return fields we actually parsed from
-// Yahoo's quoteSummary endpoint; missing fields are null, never invented.
+// Yahoo's quoteSummary endpoint (EQUITY) or CoinGecko's /coins/{id}
+// endpoint (CRYPTO); missing fields are null, never invented.
 //
 // EQUITY   → fetch quoteSummary modules (summaryDetail, defaultKeyStatistics,
 //            financialData) from Yahoo and parse trailingPE, priceToBook,
 //            returnOnEquity, revenue, earningsGrowth. Compute Graham number
 //            when EPS + BVPS available; DCF fair value stays null unless we
 //            have free-cash-flow proxies (we don't, reliably — leave null).
-// CRYPTO   → no fundamentals on Binance; Binance tickers (BTCUSDT) do not
-//            map cleanly to Yahoo crypto tickers (BTC-USD) without a manual
-//            mapping table. Prefer honesty: return explicit failure.
+// CRYPTO   → fetch market_cap / FDV / circulating / total / max supply
+//            from CoinGecko via getCryptoFundamentals (60s cache +
+//            10s timeout + 2 retries). Equity-only fields are null.
 // FOREX / COMMODITY → fundamentals not applicable.
 
 import { db } from "@/lib/db";
 import { ok, fail } from "@/lib/api";
 import { fetchWithRetry, logHealth } from "@/lib/data-health";
 import { UA } from "@/lib/data-sources/yahoo";
+import { getCryptoFundamentals } from "@/lib/data-sources/coingecko";
 import type { AssetClass, DataSourceKey, Fundamental } from "@/lib/types";
 
 const BASE = "https://query2.finance.yahoo.com";
@@ -133,6 +135,11 @@ function toStoredFundamental(row: {
   pbv: number | null;
   graham: number | null;
   dcfFair: number | null;
+  marketCap: number | null;
+  fdv: number | null;
+  circulatingSupply: number | null;
+  totalSupply: number | null;
+  maxSupply: number | null;
   source: string;
   fetchedAt: Date;
 }): Fundamental {
@@ -146,6 +153,11 @@ function toStoredFundamental(row: {
     pbv: row.pbv,
     graham: row.graham,
     dcfFair: row.dcfFair,
+    marketCap: row.marketCap,
+    fdv: row.fdv,
+    circulatingSupply: row.circulatingSupply,
+    totalSupply: row.totalSupply,
+    maxSupply: row.maxSupply,
     source: row.source as DataSourceKey,
     fetchedAt: row.fetchedAt.getTime(),
   };
@@ -167,13 +179,59 @@ export async function GET(
     }
 
     if (assetClass === "CRYPTO") {
-      // No fundamental on Binance; Binance tickers (BTCUSDT) do not map
-      // cleanly to Yahoo crypto tickers (BTC-USD) without a manual table.
-      // Honesty over fabrication: surface an explicit failure.
-      return fail(
-        "No fundamental data source configured for this crypto instrument",
-        502
-      );
+      // Fetch real crypto fundamentals (market cap, FDV, supply) from CoinGecko.
+      // CoinGecko public API is rate-limited; getCryptoFundamentals uses a
+      // 60s cache + retries. Never fabricates — surfaces DataResult failures.
+      const result = await getCryptoFundamentals(row.ticker);
+      if (!result.ok || !result.data) {
+        return fail(result.error ?? "CoinGecko fundamentals unavailable", 502);
+      }
+      const f = result.data;
+      const fetchedAt = new Date(f.fetchedAt);
+      const upserted = await db.fundamental.upsert({
+        where: { ticker: row.ticker },
+        update: {
+          revenue: null,
+          netIncome: null,
+          eps: null,
+          roe: null,
+          per: null,
+          pbv: null,
+          graham: null,
+          dcfFair: null,
+          marketCap: f.marketCap ?? null,
+          fdv: f.fdv ?? null,
+          circulatingSupply: f.circulatingSupply ?? null,
+          totalSupply: f.totalSupply ?? null,
+          maxSupply: f.maxSupply ?? null,
+          source: "coingecko",
+          fetchedAt,
+        },
+        create: {
+          ticker: row.ticker,
+          revenue: null,
+          netIncome: null,
+          eps: null,
+          roe: null,
+          per: null,
+          pbv: null,
+          graham: null,
+          dcfFair: null,
+          marketCap: f.marketCap ?? null,
+          fdv: f.fdv ?? null,
+          circulatingSupply: f.circulatingSupply ?? null,
+          totalSupply: f.totalSupply ?? null,
+          maxSupply: f.maxSupply ?? null,
+          source: "coingecko",
+          fetchedAt,
+        },
+      });
+      return ok(toStoredFundamental(upserted), {
+        source: "coingecko",
+        sourceLabel: "CoinGecko",
+        syncedAt: upserted.fetchedAt.getTime(),
+        status: "OK",
+      });
     }
 
     // ── EQUITY ────────────────────────────────────────────────────────────
@@ -194,6 +252,12 @@ export async function GET(
         pbv: parsed.pbv,
         graham: parsed.graham,
         dcfFair: parsed.dcfFair,
+        // Equity rows have no crypto fields — clear any stale values.
+        marketCap: null,
+        fdv: null,
+        circulatingSupply: null,
+        totalSupply: null,
+        maxSupply: null,
         source: "yahoo",
         fetchedAt: new Date(),
       },
@@ -207,6 +271,11 @@ export async function GET(
         pbv: parsed.pbv,
         graham: parsed.graham,
         dcfFair: parsed.dcfFair,
+        marketCap: null,
+        fdv: null,
+        circulatingSupply: null,
+        totalSupply: null,
+        maxSupply: null,
         source: "yahoo",
         fetchedAt: new Date(),
       },

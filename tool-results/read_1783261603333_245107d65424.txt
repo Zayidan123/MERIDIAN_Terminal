@@ -1,0 +1,1298 @@
+     1→     1→# MERIDIAN Terminal — Work Log
+     2→     2→
+     3→     3→Multi-asset research, signal, risk & portfolio terminal.
+     4→     4→Platform name: **MERIDIAN Terminal**.
+     5→     5→
+     6→     6→Real data sources (verified working in this sandbox):
+     7→     7→- Crypto: Binance `data-api.binance.vision` (klines + ticker/price)
+     8→     8→- IDX equities: Yahoo Finance `query2.finance.yahoo.com` (`.JK` tickers)
+     9→     9→- Forex: Yahoo Finance (`EURUSD=X`, etc.)
+    10→    10→- Gold: Yahoo Finance `GC=F` (COMEX Gold Futures)
+    11→    11→
+    12→    12→Non-negotiable data integrity rule (PRD §6): NO simulated/dummy/placeholder data
+    13→    13→in any environment. When a source is down/rate-limited, surface the failure
+    14→    14→explicitly (Loading / No data / Source unavailable). Every panel shows a
+    15→    15→Provenance Bar (source + sync time).
+    16→    16→
+    17→    17→---
+    18→    18→Task ID: 1
+    19→    19→Agent: main (orchestrator)
+    20→    20→Task: Foundation — institutional theme/fonts, Prisma schema (db pushed), lib utilities (types, formatters, indicators, data-health w/ logging+cache, data source clients for Binance & Yahoo, unified facade, seed of real instruments, API helpers).
+    21→    21→
+    22→    22→Work Log:
+    23→    23→- Wrote `src/app/globals.css` with institutional dark palette (#0B0E13 bg, #151920 panel, #262B33 border, #E7E9EC text, gain #2E9E6D, loss #C7484B, brand #3B5FE0). Added slim scrollbar, live-pulse + flash animations, `.tabular` helper.
+    24→    24→- Wrote `src/app/layout.tsx` with Inter (body), IBM Plex Sans (heading), JetBrains Mono (mono) fonts; forced `.dark` class on `<html>`; updated metadata to MERIDIAN Terminal.
+    25→    25→- Wrote `prisma/schema.prisma` with models: Instrument, Fundamental, Watchlist, WatchlistItem, Alert, SignalEvent, Position, RiskSnapshot, DataSourceHealthLog. Ran `bun run db:push` (synced + generated client).
+    26→    26→- Wrote `src/lib/types.ts` (domain types: AssetClass, Instrument, Candle, Quote, Fundamental, HealthStatus, Provenance, AlertRule, SignalEvent, Position, RiskSummary, CorrelationCell, DataResult).
+    27→    27→- Wrote `src/lib/format.ts` (fmtPrice/fmtCompact/fmtPct/fmtTimeAgo/fmtClock/changeColor + ASSET_CLASS_META + SOURCE_LABELS).
+    28→    28→- Wrote `src/lib/data-health.ts` (in-memory TTL cache, `logHealth` writes to DataSourceHealthLog non-blocking + keeps ring buffer, `fetchWithRetry` w/ timeout+backoff, `getRecentHealth`, `getLatestHealthBySource`).
+    29→    29→- Wrote `src/lib/indicators.ts` (sma, ema, rsi Wilder, macd, snapshot, returnsStats, volumeZScore, correlation, valueAtRisk).
+    30→    30→- Wrote `src/lib/data-sources/binance.ts` (getKlines, getQuote — derives 24h stats from 24h klines, honest nulls on failure).
+    31→    31→- Wrote `src/lib/data-sources/yahoo.ts` (getChart, getQuote — IDX/forex/gold via query2 + User-Agent).
+    32→    32→- Wrote `src/lib/data-sources/index.ts` (unified facade getCandles/getQuote/getQuotes).
+    33→    33→- Wrote `src/lib/seed.ts` (SEED_INSTRUMENTS — real tickers only: 7 crypto Binance, 7 IDX, 4 forex, 1 gold; `ensureSeed` idempotent).
+    34→    34→- Wrote `src/lib/api.ts` (ok/fail/fromResult envelope helpers).
+    35→    35→
+    36→    36→Stage Summary:
+    37→    37→- Foundation complete. DB synced. All data-layer primitives ready.
+    38→    38→- Conventions established: every data-source call returns `DataResult<T>` with optional `provenance`; failures are surfaced, never fabricated. API routes use `ok/fail/fromResult` envelope.
+    39→    39→- Next: parallel API route subagents (2-a data layer, 2-b alerts/signals, 2-c portfolio/risk), then frontend.
+    40→    40→
+    41→    41→---
+    42→    42→Task ID: 2-a
+    43→    43→Agent: full-stack-developer (data layer API)
+    44→    44→Task: Build the 12 App-Router API routes under `src/app/api/v1/...` for the
+    45→    45→MERIDIAN Terminal data layer — instruments CRUD, watchlist management, prices
+    46→    46→(candles), quotes (single + concurrent batch), technicals, fundamentals,
+    47→    47→market-summary, health, and explicit seed. Every route honors PRD §6 (no
+    48→    48→fabricated data; failures surface as explicit `ok:false` with per-row errors).
+    49→    49→Every market-data response carries a `provenance` object.
+    50→    50→
+    51→    51→Work Log:
+    52→    52→- Read worklog + lib foundations (types, api envelope, data-sources facade,
+    53→    53→  binance + yahoo clients, indicators, data-health, seed, format, schema).
+    54→    54→- Exported the shared `UA` User-Agent constant from `src/lib/data-sources/yahoo.ts`
+    55→    55→  so the fundamentals route can reuse it for the Yahoo quoteSummary fetch.
+    56→    56→- Created `src/app/api/v1/instruments/route.ts` — GET (calls ensureSeed first,
+    57→    57→  optional `?assetClass=` filter, returns Instrument[]) + POST (validates
+    58→    58→  ticker/symbol/name/currency/assetClass/source, unique-constraint → 409,
+    59→    59→  also attaches to Default watchlist).
+    60→    60→- Created `src/app/api/v1/instruments/[id]/route.ts` — GET (404 if missing) +
+    61→    61→  DELETE (cascades via schema onDelete Cascade). Returns `{ ok, data: true }`.
+    62→    62→- Created `src/app/api/v1/watchlist/route.ts` — GET returns Default watchlist
+    63→    63→  with included instruments sorted by symbol, shape:
+    64→    64→  `{ id, name, items: [{ id, instrument, addedAt }] }`.
+    65→    65→- Created `src/app/api/v1/watchlist/[instrumentId]/route.ts` — POST (upsert =
+    66→    66→  idempotent add) + DELETE (deleteMany on watchlistId+instrumentId).
+    67→    67→- Created `src/app/api/v1/prices/[instrumentId]/route.ts` — GET `?range=`
+    68→    68→  (default 7d, validates against allowed list). Calls getCandles, returns
+    69→    69→  `{ instrument, range, candles }` + provenance via ok(). On data failure
+    70→    70→  returns fromResult(...) → 502.
+    71→    71→- Created `src/app/api/v1/quotes/route.ts` — GET concurrent quotes for all
+    72→    72→  Default watchlist instruments. Returns per-row discriminated union:
+    73→    73→  success `{ ok:true, instrumentId, ticker, symbol, quote, provenance }` or
+    74→    74→  failure `{ ok:false, instrumentId, ticker, symbol, error }`. Aggregate
+    75→    75→  `provenance.syncedAt` = max of successful rows.
+    76→    76→- Created `src/app/api/v1/quotes/[instrumentId]/route.ts` — GET single quote,
+    77→    77→  delegates to fromResult(getQuote(instrument)).
+    78→    78→- Created `src/app/api/v1/technicals/[instrumentId]/route.ts` — GET `?range=`
+    79→    79→  (default 3m). Fetches candles, computes `snapshot(candles)` + `volumeZScore`
+    80→    80→  + `returnsStats` + `lastClose`. Returns `{ technicals, volumeZScore,
+    81→    81→  returnsStats, lastClose, range, candleCount }` + provenance.
+    82→    82→- Created `src/app/api/v1/fundamentals/[instrumentId]/route.ts` — GET:
+    83→    83→  • FOREX/COMMODITY → 400 "Fundamentals not applicable for this asset class".
+    84→    84→  • CRYPTO → 502 "No fundamental data source configured for this crypto
+    85→    85→    instrument" (Binance tickers don't map cleanly to Yahoo crypto tickers;
+    86→    86→    prefer honesty over fabrication).
+    87→    87→  • EQUITY → fetches Yahoo `/v10/finance/quoteSummary/{ticker}?modules=
+    88→    88→    summaryDetail,defaultKeyStatistics,financialData` with the shared UA.
+    89→    89→    Defensive field parsing (tolerates both `{raw: n}` and flat `n` shapes).
+    90→    90→    Parses trailingPE / priceToBook / returnOnEquity / totalRevenue /
+    91→    91→    netIncomeToCommon / trailingEps / bookValuePerShare. Computes Graham
+    92→    92→    number = sqrt(22.5 * EPS * BVPS) only when both available & positive;
+    93→    93→    dcfFair always null (we don't have FCF proxies — never invent).
+    94→    94→    Upserts into Fundamental table (keyed by ticker) + returns stored record
+    95→    95→    with provenance `{ source:"yahoo", sourceLabel:"Yahoo Finance",
+    96→    96→    syncedAt, status:"OK" }`. On fetch failure → 502 with the upstream error
+    97→    97→    (e.g. "HTTP 429" when rate-limited). Logs to DataSourceHealthLog.
+    98→    98→- Created `src/app/api/v1/market-summary/route.ts` — GET cross-asset snapshot
+    99→    99→  for the dashboard header. Pulls 5 representative instruments (BTCUSDT,
+   100→   100→  ETHUSDT, BBCA.JK, GC=F, EURUSD=X) from db by ticker, calls getQuotes,
+   101→   101→  aggregates gainers/losers/unchanged/failed counts + avgChangePct +
+   102→   102→  byAssetClass average pct (null when class has 0 successful quotes).
+   103→   103→- Created `src/app/api/v1/health/route.ts` — GET returns `{ latest, recent }`
+   104→   104→  where `latest` is per-source typed records from `getLatestHealthBySource()`
+   105→   105→  and `recent` is the most recent 30 rows from DataSourceHealthLog ordered
+   106→   106→  by createdAt desc.
+   107→   107→- Created `src/app/api/v1/seed/route.ts` — POST explicitly runs ensureSeed()
+   108→   108→  and returns `{ ok, data: { seeded: true } }`.
+   109→   109→- All route handlers: Next.js 16 async `params: Promise<{...}>` awaited before
+   110→   110→  reading. Whole body wrapped in try/catch → `fail("Internal error", 500)`.
+   111→   111→  No `any` types — used `unknown` + runtime type guards for body parsing.
+   112→   112→- Verified lint: `bun run lint` → exit 0, no errors.
+   113→   113→- Smoke-tested every route against the live dev server:
+   114→   114→  • instruments GET (with and without ?assetClass), POST custom + duplicate
+   115→   115→    (409) + invalid source (400) + DELETE cleanup ✓
+   116→   116→  • watchlist GET, POST add (idempotent) + DELETE remove ✓
+   117→   117→  • prices/quotes/technicals for BTCUSDT (real Binance data, all OK) ✓
+   118→   118→  • quotes (all 19 watchlist rows) — Yahoo rows surfaced HTTP 429 per-row
+   119→   119→    with ok:false (integrity policy working as designed) ✓
+   120→   120→  • fundamentals for FOREX (400), CRYPTO (502), EQUITY BBCA.JK (502 HTTP 429
+   121→   121→    — Yahoo quoteSummary rate-limited in sandbox, surfaced honestly) ✓
+   122→   122→  • market-summary (2 gainers, 0 losers, 3 failed, byAssetClass CRYPTO has
+   123→   123→    avg, others null) ✓
+   124→   124→  • health (latest empty until first external call — expected, since
+   125→   125→    getLatestHealthBySource uses the in-memory ring buffer) ✓
+   126→   126→  • seed POST ✓
+   127→   127→  • 404 for unknown instrument id ✓
+   128→   128→  • invalid range falls back to default ✓
+   129→   129→
+   130→   130→Stage Summary:
+   131→   131→Files created (12 routes + 1 lib tweak):
+   132→   132→- src/lib/data-sources/yahoo.ts            (modified: exported UA constant)
+   133→   133→- src/app/api/v1/instruments/route.ts
+   134→   134→- src/app/api/v1/instruments/[id]/route.ts
+   135→   135→- src/app/api/v1/watchlist/route.ts
+   136→   136→- src/app/api/v1/watchlist/[instrumentId]/route.ts
+   137→   137→- src/app/api/v1/prices/[instrumentId]/route.ts
+   138→   138→- src/app/api/v1/quotes/route.ts
+   139→   139→- src/app/api/v1/quotes/[instrumentId]/route.ts
+   140→   140→- src/app/api/v1/technicals/[instrumentId]/route.ts
+   141→   141→- src/app/api/v1/fundamentals/[instrumentId]/route.ts
+   142→   142→- src/app/api/v1/market-summary/route.ts
+   143→   143→- src/app/api/v1/health/route.ts
+   144→   144→- src/app/api/v1/seed/route.ts
+   145→   145→
+   146→   146→Key decisions:
+   147→   147→- All envelopes are `{ ok:true, data, provenance? }` or
+   148→   148→  `{ ok:false, error, ... }` — `ok`/`fail`/`fromResult` helpers from lib/api.
+   149→   149→- ensureSeed() is called only on GET /instruments and POST /seed (per task
+   150→   150→  spec) to avoid wasteful upserts on every price/quote call.
+   151→   151→- All datetime fields returned as epoch ms (number) at the API boundary —
+   152→   152→  Prisma Date objects are converted via .getTime().
+   153→   153→- Per-row discriminated union on /quotes so the frontend can render each row
+   154→   154→  independently with a per-row "Source unavailable" badge when its source
+   155→   155→  fails — this is the core of the integrity policy at the UI level.
+   156→   156→- Yahoo quoteSummary is wrapped in fetchWithRetry (2 retries, 8s timeout) and
+   157→   157→  logs to DataSourceHealthLog via logHealth(), matching the chart/price paths.
+   158→   158→- Lint: clean (exit 0).
+   159→   159→
+   160→   160→Response shapes the frontend agent should consume (TypeScript interfaces):
+   161→   161→
+   162→   162→```ts
+   163→   163→// GET /api/v1/instruments          POST /api/v1/instruments
+   164→   164→// GET /api/v1/instruments/[id]
+   165→   165→type Instrument = {
+   166→   166→  id: string;
+   167→   167→  assetClass: "CRYPTO" | "EQUITY" | "FOREX" | "COMMODITY";
+   168→   168→  ticker: string; symbol: string; name: string;
+   169→   169→  exchange: string | null; currency: string;
+   170→   170→  source: "binance" | "yahoo" | "coingecko";
+   171→   171→  lotSize: number | null; metadata: string | null;
+   172→   172→};
+   173→   173→data: Instrument[] | Instrument
+   174→   174→
+   175→   175→// DELETE /api/v1/instruments/[id]
+   176→   176→data: true
+   177→   177→
+   178→   178→// GET /api/v1/watchlist
+   179→   179→data: {
+   180→   180→  id: string; name: string;
+   181→   181→  items: { id: string; instrument: Instrument; addedAt: number }[];
+   182→   182→}
+   183→   183→
+   184→   184→// POST /api/v1/watchlist/[id]      DELETE /api/v1/watchlist/[id]
+   185→   185→data: { added: true, watchlistId: string, instrumentId: string }
+   186→   186→   |  { removed: true }
+   187→   187→
+   188→   188→// GET /api/v1/prices/[id]?range=1d|7d|1m|3m|1y
+   189→   189→data: { instrument: Instrument; range: string; candles: Candle[] }
+   190→   190→provenance: { source, sourceLabel, syncedAt, status? }
+   191→   191→// Candle = { time, open, high, low, close, volume } (time = epoch ms)
+   192→   192→
+   193→   193→// GET /api/v1/quotes
+   194→   194→data: {
+   195→   195→  quotes: ({
+   196→   196→    ok: true; instrumentId: string; ticker: string; symbol: string;
+   197→   197→    quote: Quote; provenance: Provenance;
+   198→   198→  } | {
+   199→   199→    ok: false; instrumentId: string; ticker: string; symbol: string;
+   200→   200→    error: string;
+   201→   201→  })[];
+   202→   202→  provenance: { source:"multi", sourceLabel:"Multi-source", syncedAt: number };
+   203→   203→}
+   204→   204→
+   205→   205→// GET /api/v1/quotes/[id]
+   206→   206→data: Quote
+   207→   207→// Quote = { ticker, symbol, assetClass, price, prevClose, change24h,
+   208→   208→//   changePct24h, high24h, low24h, volume24h, quoteVolume24h, currency,
+   209→   209→//   source, syncedAt }
+   210→   210→
+   211→   211→// GET /api/v1/technicals/[id]?range=...
+   212→   212→data: {
+   213→   213→  technicals: { ma20, ma50, ema12, rsi14, macd, macdSignal, macdHist }; // all number|null
+   214→   214→  volumeZScore: number | null;
+   215→   215→  returnsStats: { mean: number; std: number; sample: number };
+   216→   216→  lastClose: number; range: string; candleCount: number;
+   217→   217→}
+   218→   218→
+   219→   219→// GET /api/v1/fundamentals/[id]
+   220→   220→// success (equity):
+   221→   221→data: Fundamental
+   222→   222→// Fundamental = { ticker, revenue, netIncome, eps, roe, per, pbv, graham,
+   223→   223→//   dcfFair, source, fetchedAt } (all numeric fields nullable)
+   224→   224→// failure → { ok:false, error: string } with HTTP 400 (FOREX/COMMODITY) or
+   225→   225→//   502 (CRYPTO or Yahoo fetch failure)
+   226→   226→
+   227→   227→// GET /api/v1/market-summary
+   228→   228→data: {
+   229→   229→  gainers: number; losers: number; unchanged: number; failed: number;
+   230→   230→  avgChangePct: number | null;
+   231→   231→  byAssetClass: { CRYPTO: number|null; EQUITY: number|null;
+   232→   232→                  FOREX: number|null; COMMODITY: number|null };
+   233→   233→  asOf: number;
+   234→   234→}
+   235→   235→
+   236→   236→// GET /api/v1/health
+   237→   237→data: {
+   238→   238→  latest: { source: DataSourceKey; status: HealthStatus; latencyMs: number;
+   239→   239→            checkedAt: number }[];
+   240→   240→  recent: { id: string; source: string; endpoint: string; status: string;
+   241→   241→            latencyMs: number | null; errorMessage: string | null;
+   242→   242→            createdAt: number }[];
+   243→   243→}
+   244→   244→
+   245→   245→// POST /api/v1/seed
+   246→   246→data: { seeded: true }
+   247→   247→```
+   248→   248→
+   249→   249→Lint issues: none. `bun run lint` exits 0.
+   250→   250→
+   251→   251→Notes for the frontend agent:
+   252→   252→- Always handle `ok:false` per-row on `/api/v1/quotes` — Yahoo rows will
+   253→   253→  frequently fail with HTTP 429 in this sandbox; render a "Source unavailable"
+   254→   254→  badge for those rows without hiding successful crypto rows.
+   255→   255→- The fundamentals route for EQUITY may return 502 with `error:"HTTP 429"`
+   256→   256→  when Yahoo is rate-limiting; show a retry affordance + the provenance bar.
+   257→   257→- All epoch times are returned in milliseconds.
+   258→   258→- The `/api/v1/health` `latest` array starts empty until the first external
+   259→   259→  call populates the in-memory ring buffer. If the frontend hits it on first
+   260→   260→  paint, expect `latest: []`; poll after the first market-data request to see
+   261→   261→  populated status.
+   262→   262→
+   263→   263→---
+   264→   264→Task ID: 2-b
+   265→   265→Agent: full-stack-developer (alerts & signals API)
+   266→   266→Task: Build the 5 Alerts & Signals App-Router API routes for MERIDIAN Terminal —
+   267→   267→alerts list/create, alert PATCH/soft-delete, alert evaluation engine (signal
+   268→   268→detection from REAL market data), signals list with filters, and anomaly/pattern
+   269→   269→scanner over the watchlist. Every route honors PRD §6 (no fabricated data;
+   270→   270→failures surface explicitly). Each emitted SignalEvent carries the full data
+   271→   271→context that triggered it for later accuracy evaluation (FR-2.4).
+   272→   272→
+   273→   273→Work Log:
+   274→   274→- Read worklog + lib foundations (types, api envelope, data-sources facade,
+   275→   275→  indicators, seed, format, schema) + 2-a route patterns for consistency.
+   276→   276→- Created `src/app/api/v1/alerts/route.ts` — GET (status != "DELETED",
+   277→   277→  include instrument, orderBy createdAt desc) + POST (validates metric ∈
+   278→   278→  {price, pct_change_24h, volume_spike, rsi, price_above_ma}, operator ∈
+   279→   279→  {gt, lt, cross_up, cross_down}, threshold is finite number, instrumentId
+   280→   280→  exists in DB; defaults status "ACTIVE"). Returns AlertWithInstrument.
+   281→   281→- Created `src/app/api/v1/alerts/[id]/route.ts` — PATCH (only status /
+   282→   282→  threshold / operator / note; each field validated if present; "No valid
+   283→   283→  fields to update" if body empty) + DELETE (soft-delete: status="DELETED",
+   284→   284→  row retained). 404 on missing id for both.
+   285→   285→- Created `src/app/api/v1/alerts/evaluate/route.ts` — POST signal engine.
+   286→   286→  Loads all status="ACTIVE" alerts (with instrument), iterates sequentially.
+   287→   287→  Per-alert, fetches real data via getQuote / getCandles and computes the
+   288→   288→  observed value per metric:
+   289→   289→    • price → quote.price; previous = quote.prevClose (for cross detection)
+   290→   290→    • pct_change_24h → quote.changePct24h; previous = null (cross degrades)
+   291→   291→    • rsi → snapshot(candles 3m).rsi14; previous = rsi(candles,14)[-2]
+   292→   292→    • volume_spike → volumeZScore(candles 1m, 20); previous = null
+   293→   293→    • price_above_ma → ((lastClose - ma) / ma) * 100 % offset; previous
+   294→   294→      computed from prevClose vs same ma; ma = snapshot.ma20 ?? snapshot.ma50
+   295→   295→  On condition met: db.$transaction([update alert status="TRIGGERED" +
+   296→   296→  triggeredAt=now, create SignalEvent signalType="ALERT_TRIGGER" with full
+   297→   297→  contextJson]). Severity: volume_spike & rsi → WARN, others → INFO.
+   298→   298→  On data fetch failure: pushed to skipped[] with the upstream error (e.g.
+   299→   299→  "HTTP 429"). Already-TRIGGERED alerts are not re-evaluated (only ACTIVE
+   300→   300→  alerts are loaded). Per-request FetchCache memoizes quote + candle fetches
+   301→   301→  per instrumentId:range so multiple alerts on the same instrument don't
+   302→   302→  hammer upstream.
+   303→   303→- Created `src/app/api/v1/signals/route.ts` — GET recent SignalEvents with
+   304→   304→  filters: ?limit (1..200, default 50), ?signalType (validated against
+   305→   305→  allowed set; invalid silently ignored), ?since=<epochMs>. Includes
+   306→   306→  instrument relation. contextJson parsed to `context` object (null on
+   307→   307→  parse failure, never crashes the list). Ordered createdAt desc.
+   308→   308→- Created `src/app/api/v1/signals/scan/route.ts` — POST anomaly & pattern
+   309→   309→  scanner. Loads Default watchlist instruments, fetches real 3m candles per
+   310→   310→  instrument, runs pure `detect()` function:
+   311→   311→    • VOLUME_SPIKE  volumeZScore(20) > 2.5    → WARN
+   312→   312→    • BREAKOUT      lastClose > max(prior 20)  → INFO
+   313→   313→    • RSI_OB        rsi14 > 70                 → WARN
+   314→   314→    • RSI_OS        rsi14 < 30                 → WARN
+   315→   315→    • ANOMALY       |lastLogRet - μ| > 3σ      → CRITICAL
+   316→   316→  All baselines (μ, σ, z-score, RSI) computed from the REAL candle window —
+   317→   317→  no arbitrary thresholds. Per detection: dedupe via
+   318→   318→  db.signalEvent.findFirst({ instrumentId, signalType, createdAt > 1h ago });
+   319→   319→  if exists, skip silently. Otherwise create SignalEvent with contextJson
+   320→   320→  that includes the metric-specific computed values + last3Candles for later
+   321→   321→  evaluation. Candle-fetch failures per instrument → skipped[] with error.
+   322→   322→- Bug found & fixed during smoke test: FetchCache initially had a private
+   323→   323→  field `candles: Map<...>` colliding with the `candles(...)` method name.
+   324→   324→  Class fields are instance properties; they shadow prototype methods at
+   325→   325→  runtime, so `cache.candles(...)` threw "cache.candles is not a function".
+   326→   326→  Renamed fields to `quoteMap` / `candleMap` and added an inline comment.
+   327→   327→- All route handlers: Next.js 16 `params: Promise<{...}>` awaited before
+   328→   328→  reading. Whole body wrapped in try/catch → `fail("Internal error", 500)`.
+   329→   329→  No `any` types — `unknown` + runtime narrowing for body parsing. No
+   330→   330→  `eval`/`exec`, no SQL string concatenation (Prisma only).
+   331→   331→- Verified lint: `bun run lint` → exit 0, no errors.
+   332→   332→- Smoke-tested every route against the live dev server:
+   333→   333→  • alerts GET (empty then 3 → 6 after creations) ✓
+   334→   334→  • alerts POST validation (missing instrumentId, bad metric, bad operator,
+   335→   335→    non-finite threshold, nonexistent instrumentId) → all 400 with correct
+   336→   336→    messages ✓
+   337→   337→  • alerts POST success → 200 with instrument included, status=ACTIVE ✓
+   338→   338→  • alerts/[id] PATCH validation (bad status, bad operator, no fields, 404)
+   339→   339→    ✓ + success (note + threshold update, status PAUSED→ACTIVE) ✓
+   340→   340→  • alerts/[id] DELETE soft-delete (alert disappears from GET list) + 404
+   341→   341→    for unknown id ✓
+   342→   342→  • alerts/evaluate POST: 3 ACTIVE BTC alerts evaluated against real
+   343→   343→    Binance quote ($62,616). 2 triggered (price>1000, pct_change_24h>-100),
+   344→   344→    1 no-trigger (price>150000). SignalEvents created with proper severity
+   345→   345→    (INFO for price/pct_change_24h, WARN for rsi/volume_spike). Idempotent
+   346→   346→    re-evaluate (only remaining ACTIVE alert processed) ✓
+   347→   347→  • alerts/evaluate with EUR/USD alert (Yahoo): correctly skipped with
+   348→   348→    `error: "HTTP 429"` — integrity policy working ✓
+   349→   349→  • alerts/evaluate all 5 metrics (price, pct_change_24h, rsi=47.85,
+   350→   350→    volume_spike z=-1.70, price_above_ma offset=+0.92%) — all working with
+   351→   351→    real data + correct context (prevClose / previousRsi / ma / lastClose) ✓
+   352→   352→  • signals GET with filters: limit (1, 500 capped at 200), signalType
+   353→   353→    (ALERT_TRIGGER=2 results, VOLUME_SPIKE=0), since (future=0, 0=all) ✓
+   354→   354→  • signals/scan POST: 19 watchlist instruments scanned, 0 detected (no
+   355→   355→    current anomalies), 12 skipped (Yahoo HTTP 429), 7 crypto scanned
+   356→   356→    successfully. ~1.3s end-to-end ✓
+   357→   357→
+   358→   358→Stage Summary:
+   359→   359→Files created (5 routes):
+   360→   360→- src/app/api/v1/alerts/route.ts
+   361→   361→- src/app/api/v1/alerts/[id]/route.ts
+   362→   362→- src/app/api/v1/alerts/evaluate/route.ts
+   363→   363→- src/app/api/v1/signals/route.ts
+   364→   364→- src/app/api/v1/signals/scan/route.ts
+   365→   365→
+   366→   366→Key decisions:
+   367→   367→- Per-request FetchCache in /alerts/evaluate memoizes quote + candle fetches
+   368→   368→  (keyed by instrumentId:range) so multiple alerts on the same instrument
+   369→   369→  don't trigger duplicate upstream calls within one evaluation pass.
+   370→   370→- /alerts/evaluate runs sequentially (not Promise.all) to avoid hammering
+   371→   371→  external APIs; latency budget is comfortable (~500ms for 4 alerts even
+   372→   372→  when fetching 3m + 1m candles for the same instrument).
+   373→   373→- /signals/scan also runs sequentially for the same reason.
+   374→   374→- price_above_ma threshold is interpreted as a percentage offset from MA
+   375→   375→  (threshold=0 = right at MA, threshold=5 = 5% above MA). This is the most
+   376→   376→  flexible interpretation and matches the spec's "cross_up = prevClose <=
+   377→   377→  ma && lastClose > ma" when threshold=0.
+   378→   378→- For metrics without a meaningful "previous" value (pct_change_24h,
+   379→   379→  volume_spike), cross_up/cross_down degrade to gt/lt — documented inline.
+   380→   380→- Dedupe in /signals/scan is silent (deduped detections are NOT added to
+   381→   381→  detected[] or skipped[]). The frontend can hit GET /signals to see all
+   382→   382→  existing events.
+   383→   383→- SignalEvent.contextJson is parsed to `context` object at the GET /signals
+   384→   384→  boundary (null on parse failure — never crashes the list response).
+   385→   385→- All datetime fields returned as epoch ms at the API boundary (Prisma Date
+   386→   386→  → .getTime()), matching the 2-a convention.
+   387→   387→
+   388→   388→Response shapes the frontend agent should consume (TypeScript interfaces):
+   389→   389→
+   390→   390→```ts
+   391→   391→// GET /api/v1/alerts                       POST /api/v1/alerts
+   392→   392→// PATCH /api/v1/alerts/[id]
+   393→   393→// (POST/PATCH return a single object, GET returns an array)
+   394→   394→type AlertWithInstrument = {
+   395→   395→  id: string;
+   396→   396→  instrumentId: string;
+   397→   397→  instrument: Instrument;        // { id, assetClass, ticker, symbol, name,
+   398→   398→                                 //   exchange, currency, source, lotSize, metadata }
+   399→   399→  metric: "price" | "pct_change_24h" | "volume_spike" | "rsi" | "price_above_ma";
+   400→   400→  operator: "gt" | "lt" | "cross_up" | "cross_down";
+   401→   401→  threshold: number;
+   402→   402→  status: "ACTIVE" | "TRIGGERED" | "PAUSED" | "DELETED";
+   403→   403→  note: string | null;
+   404→   404→  createdAt: number;             // epoch ms
+   405→   405→  triggeredAt: number | null;    // epoch ms
+   406→   406→  updatedAt: number;             // epoch ms
+   407→   407→};
+   408→   408→
+   409→   409→// DELETE /api/v1/alerts/[id]
+   410→   410→data: true
+   411→   411→
+   412→   412→// POST /api/v1/alerts/evaluate
+   413→   413→data: {
+   414→   414→  evaluated: number;
+   415→   415→  triggered: Array<{
+   416→   416→    alertId: string;
+   417→   417→    instrumentId: string;
+   418→   418→    ticker: string;
+   419→   419→    symbol: string;
+   420→   420→    metric: string;
+   421→   421→    operator: string;
+   422→   422→    threshold: number;
+   423→   423→    observed: number;
+   424→   424→    priceAtEvent: number;
+   425→   425→    severity: "INFO" | "WARN" | "CRITICAL";
+   426→   426→    message: string;
+   427→   427→    signalEventId: string;
+   428→   428→  }>;
+   429→   429→  skipped: Array<{
+   430→   430→    alertId: string;
+   431→   431→    instrumentId: string;
+   432→   432→    ticker: string;
+   433→   433→    symbol: string;
+   434→   434→    error: string;
+   435→   435→  }>;
+   436→   436→}
+   437→   437→
+   438→   438→// GET /api/v1/signals?limit=&signalType=&since=
+   439→   439→data: SignalEventWithInstrument[]
+   440→   440→type SignalEventWithInstrument = {
+   441→   441→  id: string;
+   442→   442→  instrumentId: string;
+   443→   443→  instrument: Instrument;
+   444→   444→  signalType: "VOLUME_SPIKE" | "BREAKOUT" | "RSI_OB" | "RSI_OS"
+   445→   445→            | "ALERT_TRIGGER" | "ANOMALY";
+   446→   446→  severity: "INFO" | "WARN" | "CRITICAL";
+   447→   447→  message: string;
+   448→   448→  priceAtEvent: number | null;
+   449→   449→  context: Record<string, unknown> | null;
+   450→   450→  createdAt: number;
+   451→   451→};
+   452→   452→
+   453→   453→// POST /api/v1/signals/scan
+   454→   454→data: {
+   455→   455→  scanned: number;
+   456→   456→  detected: Array<{
+   457→   457→    instrumentId: string;
+   458→   458→    ticker: string;
+   459→   459→    symbol: string;
+   460→   460→    signalType: string;
+   461→   461→    severity: string;
+   462→   462→    message: string;
+   463→   463→    priceAtEvent: number;
+   464→   464→    context: Record<string, unknown>;
+   465→   465→    signalEventId: string;
+   466→   466→  }>;
+   467→   467→  skipped: Array<{
+   468→   468→    instrumentId: string;
+   469→   469→    ticker: string;
+   470→   470→    symbol: string;
+   471→   471→    error: string;
+   472→   472→  }>;
+   473→   473→}
+   474→   474→```
+   475→   475→
+   476→   476→Lint issues: none. `bun run lint` exits 0.
+   477→   477→
+   478→   478→Notes for the frontend agent:
+   479→   479→- Polling strategy:
+   480→   480→  • POST /alerts/evaluate every 60s. After each poll: if triggered.length > 0,
+   481→   481→    refetch GET /alerts (to update ACTIVE → TRIGGERED) and GET /signals (to
+   482→   482→    display new ALERT_TRIGGER events). Surface skipped[] in a "data source
+   483→   483→    degraded" panel per-instrument (e.g. "EUR/USD: HTTP 429").
+   484→   484→  • POST /signals/scan every 2-5 minutes (heavier — fetches 3m candles for
+   485→   485→    every watchlist instrument). After each poll: if detected.length > 0,
+   486→   486→    refetch GET /signals to display new anomaly events. Deduplication is
+   487→   487→    server-side (1h window per instrumentId+signalType), so the frontend
+   488→   488→    doesn't need to dedupe.
+   489→   489→  • Both endpoints are safe to call concurrently.
+   490→   490→- Metric semantics for the alert-create form:
+   491→   491→  • price: absolute price (e.g. 100000). cross_up fires when prevClose ≤
+   492→   492→    threshold < current price.
+   493→   493→  • pct_change_24h: percent (e.g. 5 = +5%). Cross degrades to gt/lt.
+   494→   494→  • rsi: RSI value 0–100. cross uses second-to-last RSI from series.
+   495→   495→  • volume_spike: z-score (e.g. 2.5 = 2.5σ above 20-bar mean volume).
+   496→   496→  • price_above_ma: **percentage offset from MA** (0 = right at MA, 5 = 5%
+   497→   497→    above). MA used is MA20 (or MA50 if MA20 null).
+   498→   498→- Yahoo instruments (EQUITY/FOREX/COMMODITY) will frequently surface HTTP
+   499→   499→  429 in the `skipped` arrays of both /alerts/evaluate and /signals/scan.
+   500→   500→  Render those rows with a "Source unavailable" badge without hiding the
+   501→   501→  successful crypto rows.
+   502→   502→- All epoch times are returned in milliseconds.
+   503→   503→- The `context` object on SignalEvent varies by signalType — render it
+   504→   504→  defensively (Object.entries → key/value table). Common keys: metric,
+   505→   505→  operator, threshold, observed, priceAtEvent (ALERT_TRIGGER); zScore,
+   506→   506→  lookback (VOLUME_SPIKE); breakoutLevel (BREAKOUT); rsi14 (RSI_OB/OS);
+   507→   507→  lastReturn, mean, std, zScore (ANOMALY); last3Candles (always present on
+   508→   508→  scan-emitted events for later accuracy evaluation).
+   509→   509→
+   510→   510→---
+   511→   511→Task ID: 2-c
+   512→   512→Agent: full-stack-developer (portfolio & risk API)
+   513→   513→Task: Build the 4 Portfolio & Risk Management App-Router API routes for
+   514→   514→MERIDIAN Terminal — portfolio list/create, single position PATCH/DELETE,
+   515→   515→full portfolio RiskSummary (exposure per asset class, VaR, drawdown,
+   516→   516→correlation matrix — all from REAL live prices + REAL 3m daily candles),
+   517→   517→and a pure position-sizing calculator. Every route honors PRD §6 (no
+   518→   518→fabricated data; per-position quote/candle failures surface explicitly as
+   519→   519→null fields + an `error` string). RiskSummary persists a RiskSnapshot row
+   520→   520→(non-blocking) for historical trending.
+   521→   521→
+   522→   522→Work Log:
+   523→   523→- Read worklog + lib foundations (types, api envelope, data-sources facade,
+   524→   524→  indicators w/ correlation() helper, schema, db client) + 2-a and 2-b
+   525→   525→  route patterns for consistency.
+   526→   526→- Created `src/app/api/v1/portfolio/route.ts` —
+   527→   527→  • GET: list all positions with instrument relation (createdAt desc),
+   528→   528→    then concurrent `Promise.all(getQuote)` per position. Computes
+   529→   529→    lastPrice, marketValue (size × lastPrice — same for LONG/SHORT,
+   530→   530→    sign handled in PnL), unrealizedPnl ((last-entry)×size LONG /
+   531→   531→    (entry-last)×size SHORT), unrealizedPnlPct (pnl/cost × 100). On
+   532→   532→    quote failure: lastPrice/marketValue/unrealizedPnl/unrealizedPnlPct
+   533→   533→    all null + `error: string` on that row.
+   534→   534→  • POST: validates side ∈ {LONG,SHORT}, entryPrice>0, size>0,
+   535→   535→    instrumentId exists (400 on any failure). openedAt optional —
+   536→   536→    accepts epoch ms number or ISO string, defaults to now. note optional.
+   537→   537→    Returns the created position with instrument; market fields are null
+   538→   538→    on the create response (caller refetches via GET for live enrichment
+   539→   539→    — keeps the write cheap & decoupled from rate-limited upstreams).
+   540→   540→- Created `src/app/api/v1/portfolio/[id]/route.ts` —
+   541→   541→  • PATCH: 404 if missing. Validates each present field (entryPrice/size
+   542→   542→    >0 via shared `parsePositiveNumber` helper, side ∈ {LONG,SHORT},
+   543→   543→    note string|null). "No valid fields to update" → 400. Returns
+   544→   544→    updated position with instrument; market fields null on response
+   545→   545→    (same rationale as POST).
+   546→   546→  • DELETE: hard-delete per spec. 404 if missing. Returns `{ ok:true }`.
+   547→   547→- Created `src/app/api/v1/risk/summary/route.ts` — the heavy route.
+   548→   548→  Documented the equity definition in a header comment:
+   549→   549→    costBasis     = Σ entryPrice_i × size_i
+   550→   550→    unrealizedPnl = Σ unrealizedPnl_i  (skip nulls)
+   551→   551→    totalEquity   = costBasis + unrealizedPnl
+   552→   552→    totalExposure = Σ marketValue_i    (skip nulls)
+   553→   553→    exposurePct   = totalExposure / totalEquity × 100
+   554→   554→  Pipeline:
+   555→   555→    1. Fetch all positions w/ instrument.
+   556→   556→    2. Concurrent `getQuote` for every position's instrument.
+   557→   557→    3. Per-position marketValue/unrealizedPnl (null on quote failure).
+   558→   558→    4. Aggregate totals.
+   559→   559→    5. perAssetClass: group by instrument.assetClass, sum marketValue,
+   560→   560→       pct of totalExposure, count.
+   561→   561→    6. perPosition: { instrumentId, symbol, assetClass, marketValue,
+   562→   562→       weightPct (of totalExposure), pnlPct } — marketValue is number
+   563→   563→       (0 when quote failed, per RiskSummary type).
+   564→   564→    7. Concurrent `getCandles(instrument, "3m")` for every position.
+   565→   565→       Convert each to Map<time, logReturn> + sorted times array.
+   566→   566→    8. withReturns = positions whose return series has ≥5 points.
+   567→   567→    9. VaR(95%): require ≥2 positions with returns AND totalExposure>0.
+   568→   568→       Build aggregate portfolio return series = Σ w_i × r_i(t) where
+   569→   569→       w_i = marketValue_i / totalExposure, r_i(t) defaults to 0 when
+   570→   570→       instrument i has no observation at t. VaR = totalEquity × 1.645
+   571→   571→       × std(portfolioReturns). Null if n<10 or std=0.
+   572→   572→   10. Drawdown: same portfolio return series. equity_t = costBasis ×
+   573→   573→       Π(1+r_t). peak = running max. dd_t = (equity-peak)/peak.
+   574→   574→       currentDrawdown = last dd × 100. maxDrawdown = min dd × 100.
+   575→   575→       Null if <2 positions or <2 returns.
+   576→   576→   11. Correlation: pairwise between every pair of `withReturns`
+   577→   577→       instruments. Self-pairs (a==a) → value 1 (trivial). Cross-pairs:
+   578→   578→       two-pointer time-alignment of times arrays (intersection), then
+   579→   579→       `correlation(ra, rb)` helper (returns null if <5 overlapping pts
+   580→   580→       or zero variance). Flat list of { a:symbol, b:symbol, value }.
+   581→   581→   12. Persist RiskSnapshot row (totalEquity, totalExposure, exposurePct,
+   582→   582→       varEstimate, maxDrawdown, currentDrawdown) via fire-and-forget
+   583→   583→       `db.riskSnapshot.create(...).catch(...)` — matches the data-health
+   584→   584→       log pattern; never breaks the read path.
+   585→   585→   13. Return `{ ok, data: RiskSummary, provenance:{ source:"multi",
+   586→   586→       sourceLabel:"Multi-source (live)", syncedAt: now } }`.
+   587→   587→- Created `src/app/api/v1/risk/position-size/route.ts` —
+   588→   588→  POST pure calc (no external data). Body: { equity, riskPct, entryPrice,
+   589→   589→  stopPrice, side? }. Validates all numeric inputs finite & >0 (numeric
+   590→   590→  strings accepted). side defaults "LONG". Computes:
+   591→   591→    riskAmount    = equity × riskPct/100
+   592→   592→    perUnitRisk   = |entryPrice - stopPrice|
+   593→   593→    positionSize  = riskAmount / perUnitRisk
+   594→   594→    positionValue = positionSize × entryPrice
+   595→   595→  Returns { equity, riskPct, riskAmount, entryPrice, stopPrice,
+   596→   596→  perUnitRisk, positionSize, positionValue, side }. 400 if stopPrice
+   597→   597→  equals entryPrice (perUnitRisk=0 → infinite size).
+   598→   598→- All route handlers: Next.js 16 async `params: Promise<{...}>` awaited
+   599→   599→  before reading. Whole body wrapped in try/catch → `fail("Internal
+   600→   600→  error", 500)`. No `any` — `unknown` + runtime narrowing for body
+   601→   601→  parsing. No `eval`/`exec`, no SQL string concatenation (Prisma only).
+   602→   602→  Concurrent fetches via Promise.all.
+   603→   603→- Bug found & fixed during smoke test: in `computeMarketFields` of the
+   604→   604→  risk summary route, the local variable was originally named `pnl` but
+   605→   605→  the return statement referenced `unrealizedPnl` (undefined identifier).
+   606→   606→  Renamed the local to `unrealizedPnl` to match. Caught immediately via
+   607→   607→  the dev.log ReferenceError stack trace on the first /risk/summary call.
+   608→   608→- Verified lint: `bun run lint` → exit 0, no errors.
+   609→   609→- Smoke-tested every route against the live dev server:
+   610→   610→  • portfolio POST validation (bad side, entryPrice 0, bad instrumentId,
+   611→   611→    invalid JSON) → all 400 with correct messages ✓
+   612→   612→  • portfolio POST success ×3 (BTC LONG 60000×0.5, ETH SHORT 3000×2,
+   613→   613→    SOL LONG 150×10 with ISO openedAt) ✓
+   614→   614→  • portfolio GET — 3 positions enriched with live Binance quotes:
+   615→   615→    BTC last=62676 mv=31338 pnl=+1344 pnl%=+4.46%, ETH SHORT last=1763
+   616→   616→    mv=3526 pnl=+2473 pnl%=+41.2%, SOL last=80.68 mv=807 pnl=-693
+   617→   617→    pnl%=-46.2% — PnL signs correct for both LONG and SHORT ✓
+   618→   618→  • portfolio/[id] PATCH validation (404 missing, no fields 400, bad
+   619→   619→    side 400, negative entryPrice 400) + success (entryPrice+size+note+
+   620→   620→    side update) ✓
+   621→   621→  • portfolio/[id] DELETE 404 + success (position removed from GET list) ✓
+   622→   622→  • portfolio POST EQUITY (ASII.JK — Yahoo source) + GET — row shows
+   623→   623→    `error: "HTTP 429"`, lastPrice/marketValue/unrealizedPnl/
+   624→   624→    unrealizedPnlPct all null — integrity policy working as designed ✓
+   625→   625→  • risk/summary GET with 3 crypto positions:
+   626→   626→    totalEquity=41451.65 (=costBasis 38800 + unrealized +2651.65 ✓)
+   627→   627→    totalExposure=36515.97 (=Σmv: 31365+3532+1619 ✓)
+   628→   628→    exposurePct=88.09% (=36515/41451 ✓)
+   629→   629→    unrealizedPnl=+2651.65 ✓
+   630→   630→    perAssetClass: CRYPTO 100% count=3 ✓
+   631→   631→    perPosition: BTC 85.9%, ETH 9.7%, SOL 4.4% (Σ=100% ✓)
+   632→   632→    varEstimate=$1349.51 (parametric 95% on portfolio log-returns) ✓
+   633→   633→    currentDrawdown=-24.51%, maxDrawdown=-29.79% (reconstructed from
+   634→   634→    historical portfolio equity curve) ✓
+   635→   635→    correlation: 6 cells (3 self-pairs value=1 + 3 cross-pairs:
+   636→   636→    SOL/ETH=0.84, SOL/BTC=0.82, ETH/BTC=0.89 — high correlation as
+   637→   637→    expected for major cryptos) ✓
+   638→   638→    provenance: { source:"multi", sourceLabel:"Multi-source (live)",
+   639→   639→    syncedAt: 1783254363440 } ✓
+   640→   640→  • risk/summary GET with mixed CRYPTO+EQUITY (EQUITY quote failed):
+   641→   641→    EQUITY position contributes 0 to exposure (marketValue null→0),
+   642→   642→    its cost basis still counts toward totalEquity (per documented
+   643→   643→    definition), exposurePct drops accordingly, correlation matrix
+   644→   644→    excludes the failed-quote instrument (only CRYPTO×CRYPTO pairs) —
+   645→   645→    honest behavior, frontend shows per-position error via /portfolio ✓
+   646→   646→  • risk/summary GET on empty portfolio: returns all-zero totals, null
+   647→   647→    VaR/drawdown, empty perAssetClass/perPosition/correlation ✓
+   648→   648→  • RiskSnapshot persistence verified: 2 rows in DB after 2 calls, with
+   649→   649→    exact totalEquity/totalExposure/exposurePct/varEstimate/maxDrawdown/
+   650→   650→    currentDrawdown values matching the responses ✓
+   651→   651→  • risk/position-size POST:
+   652→   652→    - long BTC equity=50000 riskPct=1 entry=60000 stop=58000 →
+   653→   653→      riskAmount=500, perUnitRisk=2000, positionSize=0.25,
+   654→   654→      positionValue=15000 ✓
+   655→   655→    - short ETH equity=50000 riskPct=2 entry=3000 stop=3100 →
+   656→   656→      riskAmount=1000, perUnitRisk=100, positionSize=10,
+   657→   657→      positionValue=30000 ✓
+   658→   658→    - default side (omitted) → LONG ✓
+   659→   659→    - stop==entry → 400 "Stop price cannot equal entry price" ✓
+   660→   660→    - equity<=0 → 400 "equity must be > 0" ✓
+   661→   661→    - missing field → 400 "{field} must be a finite number" ✓
+   662→   662→    - numeric string coercion ("10000" → 10000) ✓
+   663→   663→
+   664→   664→Stage Summary:
+   665→   665→Files created (4 routes):
+   666→   666→- src/app/api/v1/portfolio/route.ts                       (GET + POST)
+   667→   667→- src/app/api/v1/portfolio/[id]/route.ts                  (PATCH + DELETE)
+   668→   668→- src/app/api/v1/risk/summary/route.ts                    (GET RiskSummary)
+   669→   669→- src/app/api/v1/risk/position-size/route.ts              (POST sizing)
+   670→   670→
+   671→   671→Key decisions:
+   672→   672→- Equity definition: totalEquity = costBasis + unrealizedPnl. This is
+   673→   673→  the standard "what you put in + what the market gave you back" view.
+   674→   674→  Cost basis always counts (even for positions whose live quote fails);
+   675→   675→  unrealizedPnl skips nulls (treated as 0). Documented inline.
+   676→   676→- totalExposure only counts mark-to-market-able positions (skip null
+   677→   677→  marketValue). This means a portfolio with a large failed-quote
+   678→   678→  position will show a low exposurePct — honest, and the frontend can
+   679→   679→  cross-reference with /portfolio to show "Source unavailable" per row.
+   680→   680→- perPosition.marketValue is number (not nullable) per the RiskSummary
+   681→   681→  type in src/lib/types.ts. When a quote fails, marketValue=0,
+   682→   682→  weightPct=0, pnlPct=0. The /portfolio GET endpoint carries the
+   683→   683→  explicit null + error per position; the frontend should use that for
+   684→   684→  per-row error display and use /risk/summary for the aggregated view.
+   685→   685→- VaR requires ≥2 positions with return series (per spec example). With
+   686→   686→  1 position only, VaR is null even if its own series is well-formed —
+   687→   687→  this is a conservative choice the frontend should know about. Could
+   688→   688→  be relaxed later if single-position VaR is desired.
+   689→   689→- Correlation matrix only includes pairs where BOTH instruments have a
+   690→   690→  return series (≥5 log-returns). Self-pairs (a==a) explicitly value=1
+   691→   691→  (trivial, no helper call). Cross-pairs are time-aligned via
+   692→   692→  two-pointer intersection before being passed to `correlation()`.
+   693→   693→- Drawdown reconstructed from costBasis × cumprod(1+r) using log returns
+   694→   694→  for the portfolio aggregate. Daily log returns are small (<0.05), so
+   695→   695→  1+r ≈ exp(r) and the reconstructed equity curve shape is correct.
+   696→   696→  drawdown is returned as a percentage (negative or zero).
+   697→   697→- RiskSnapshot persistence is fire-and-forget with `.catch()` to never
+   698→   698→  break the read path (matches the data-health log pattern).
+   699→   699→- POST/PATCH responses intentionally return null market fields rather
+   700→   700→  than re-fetching live quotes — keeps the write cheap & decoupled from
+   701→   701→  rate-limited upstreams; the next GET /portfolio enriches live.
+   702→   702→- All datetime fields returned as epoch ms at the API boundary (Prisma
+   703→   703→  Date → .getTime()), matching the 2-a/2-b convention.
+   704→   704→
+   705→   705→Response shapes the frontend agent should consume (TypeScript interfaces):
+   706→   706→
+   707→   707→```ts
+   708→   708→// GET /api/v1/portfolio
+   709→   709→data: PositionWithMarket[]
+   710→   710→type PositionWithMarket = {
+   711→   711→  id: string;
+   712→   712→  instrumentId: string;
+   713→   713→  instrument: Instrument;        // { id, assetClass, ticker, symbol, name,
+   714→   714→                                 //   exchange, currency, source, lotSize, metadata }
+   715→   715→  side: "LONG" | "SHORT";
+   716→   716→  entryPrice: number;
+   717→   717→  size: number;
+   718→   718→  openedAt: number;              // epoch ms
+   719→   719→  note: string | null;
+   720→   720→  createdAt: number;             // epoch ms
+   721→   721→  updatedAt: number;             // epoch ms
+   722→   722→  // Computed from live quote; ALL null when quote fetch failed (error set):
+   723→   723→  lastPrice: number | null;
+   724→   724→  marketValue: number | null;    // size × lastPrice (notional current value)
+   725→   725→  unrealizedPnl: number | null;  // (last-entry)×size LONG | (entry-last)×size SHORT
+   726→   726→  unrealizedPnlPct: number | null; // (pnl / cost) × 100
+   727→   727→  error?: string;                // present only when live quote fetch failed
+   728→   728→                                 // (e.g. "HTTP 429")
+   729→   729→};
+   730→   730→
+   731→   731→// POST /api/v1/portfolio            PATCH /api/v1/portfolio/[id]
+   732→   732→// (both return a single object; market fields are null — caller refetches
+   733→   733→//  via GET for live enrichment)
+   734→   734→data: PositionWithMarket           // (market fields all null on write responses)
+   735→   735→
+   736→   736→// Body (POST):  { instrumentId, side:"LONG"|"SHORT", entryPrice>0,
+   737→   737→//                 size>0, openedAt?(epoch ms|ISO), note? }
+   738→   738→// Body (PATCH): { entryPrice?, size?, side?, note? }   (any subset)
+   739→   739→
+   740→   740→// DELETE /api/v1/portfolio/[id]
+   741→   741→data: true
+   742→   742→
+   743→   743→// GET /api/v1/risk/summary
+   744→   744→data: RiskSummary
+   745→   745→type RiskSummary = {
+   746→   746→  totalEquity: number;            // costBasis + unrealizedPnl
+   747→   747→  totalExposure: number;          // Σ marketValue (skip nulls)
+   748→   748→  exposurePct: number;            // totalExposure / totalEquity × 100
+   749→   749→  realizedPnl: number;            // 0 in this phase (no closed trades)
+   750→   750→  unrealizedPnl: number;          // Σ per-position pnl (skip nulls)
+   751→   751→  perAssetClass: {
+   752→   752→    assetClass: "CRYPTO"|"EQUITY"|"FOREX"|"COMMODITY";
+   753→   753→    exposure: number;             // Σ marketValue in class (0 if all failed)
+   754→   754→    pct: number;                  // exposure / totalExposure × 100
+   755→   755→    count: number;                // # positions in class
+   756→   756→  }[];
+   757→   757→  perPosition: {
+   758→   758→    instrumentId: string;
+   759→   759→    symbol: string;
+   760→   760→    assetClass: "CRYPTO"|"EQUITY"|"FOREX"|"COMMODITY";
+   761→   761→    marketValue: number;          // 0 when quote failed
+   762→   762→    weightPct: number;            // marketValue / totalExposure × 100
+   763→   763→    pnlPct: number;               // 0 when quote failed
+   764→   764→  }[];
+   765→   765→  varEstimate: number | null;     // 95% parametric VaR, USD; null if
+   766→   766→                                  // <2 positions have returns OR n<10
+   767→   767→                                  // OR std=0
+   768→   768→  currentDrawdown: number | null; // % (negative or 0); null if
+   769→   769→                                  // insufficient data
+   770→   770→  maxDrawdown: number | null;     // % (most negative dd over series)
+   771→   771→  correlation: CorrelationCell[]; // flat list, self-pairs value=1,
+   772→   772→                                  // cross-pairs value|null
+   773→   773→};
+   774→   774→type CorrelationCell = {
+   775→   775→  a: string;                      // symbol
+   776→   776→  b: string;                      // symbol
+   777→   777→  value: number | null;           // -1..1 ; null if <5 overlapping points
+   778→   778→};
+   779→   779→provenance: { source:"multi", sourceLabel:"Multi-source (live)",
+   780→   780→              syncedAt: number }
+   781→   781→
+   782→   782→// POST /api/v1/risk/position-size
+   783→   783→// Body: { equity>0, riskPct, entryPrice>0, stopPrice>0, side?:"LONG"|"SHORT" }
+   784→   784→data: {
+   785→   785→  equity: number;
+   786→   786→  riskPct: number;
+   787→   787→  riskAmount: number;        // equity × riskPct/100
+   788→   788→  entryPrice: number;
+   789→   789→  stopPrice: number;
+   790→   790→  perUnitRisk: number;       // |entryPrice - stopPrice|
+   791→   791→  positionSize: number;      // riskAmount / perUnitRisk  (units to hold)
+   792→   792→  positionValue: number;     // positionSize × entryPrice
+   793→   793→  side: "LONG" | "SHORT";    // default "LONG"
+   794→   794→}
+   795→   795→// 400 if stopPrice == entryPrice ("Stop price cannot equal entry price")
+   796→   796→// 400 if any numeric input is non-finite or ≤0
+   797→   797→```
+   798→   798→
+   799→   799→Lint issues: none. `bun run lint` exits 0.
+   800→   800→
+   801→   801→Notes for the frontend agent:
+   802→   802→- Polling strategy:
+   803→   803→  • GET /api/v1/portfolio every 15–30s for the positions table — fast
+   804→   804→    (concurrent quotes, no candles).
+   805→   805→  • GET /api/v1/risk/summary every 30–60s — heavier (concurrent quotes
+   806→   806→    + concurrent 3m candle fetches per position). On a 3-position crypto
+   807→   807→    portfolio the end-to-end latency observed was ~1.3s; expect more with
+   808→   808→    Yahoo instruments (HTTP 429 retries add ~6s per Yahoo instrument).
+   809→   809→  • POST /api/v1/risk/position-size is on-demand (form submit).
+   810→   810→- Integrity handling (CRITICAL):
+   811→   811→  • A position row in GET /portfolio whose live quote failed will have
+   812→   812→    lastPrice/marketValue/unrealizedPnl/unrealizedPnlPct all === null
+   813→   813→    AND an `error` string field present (e.g. "HTTP 429"). Render that
+   814→   814→    row with a "Source unavailable" badge and dim the PnL column — do
+   815→   815→    NOT treat null as 0 or hide the row.
+   816→   816→  • In GET /risk/summary, the same failed-quote position contributes 0
+   817→   817→    (not null) to perPosition.marketValue/weightPct/pnlPct AND its cost
+   818→   818→    basis still counts toward totalEquity. So a portfolio with a large
+   819→   819→    failed-quote position will show a low exposurePct — that's correct
+   820→   820→    and honest. Cross-reference /portfolio for per-row error display.
+   821→   821→- Yahoo instruments (EQUITY/FOREX/COMMODITY) will frequently surface
+   822→   822→  HTTP 429 in the per-position `error` field of /portfolio AND be
+   823→   823→  excluded from the correlation matrix in /risk/summary (since they
+   824→   824→  have no return series). Render them with a "Source unavailable"
+   825→   825→  badge without hiding the successful crypto rows.
+   826→   826→- VaR is null when fewer than 2 positions have a usable return series
+   827→   827→  (e.g. only 1 crypto position) OR insufficient data points. Show
+   828→   828→  "Insufficient data" rather than 0 in that case.
+   829→   829→- Drawdown is returned as a percentage (negative or zero). The frontend
+   830→   830→  should compare currentDrawdown against a user-configurable threshold
+   831→   831→  (e.g. -10%) for the alert badge per FR-3.4 (alert UI logic is on the
+   832→   832→  frontend in this phase; no server-side alert is raised).
+   833→   833→- Correlation matrix is a flat list (not a 2D array). Self-pairs
+   834→   834→  (a==a) are included with value 1. Cross-pairs may have value=null
+   835→   835→  when overlap is <5 points — render as "—" in the matrix cell.
+   836→   836→- RiskSnapshot rows are persisted on every /risk/summary call (fire-
+   837→   837→  and-forget). The frontend can later add a GET /risk/snapshots route
+   838→   838→  to chart the equity/drawdown/VaR time series — that route is not in
+   839→   839→  this task's scope but the data is being collected.
+   840→   840→- All epoch times are returned in milliseconds.
+   841→   841→
+   842→   842→---
+   843→   843→Task ID: 5 (kickoff)
+   844→   844→Agent: main (orchestrator)
+   845→   845→Task: Implement the 8 prioritized PRD gaps + fix "sandbox is inactive" (root cause: dev server was stopped).
+   846→   846→
+   847→   847→Work Log:
+   848→   848→- Diagnosed "sandbox is inactive": dev server (`next dev -p 3000`) was not running → restarted, HTTP 200 confirmed.
+   849→   849→- Installed deps: bcryptjs, otplib, ccxt, node-telegram-bot-api (+ types).
+   850→   850→- Created `mini-services/ws-prices/` (socket.io mini-service scaffold, port 3001).
+   851→   851→- Will dispatch parallel subagents for items 1-7; Fase 4 (item 8) last after §16.12 checklist.
+   852→   852→
+   853→   853→Stage Summary:
+   854→   854→- Dev server running. Deps installed. Ready for parallel implementation.
+   855→   855→
+   856→   856→---
+   857→   857→Task ID: 5-1+5-2
+   858→   858→Agent: full-stack-developer (security hardening)
+   859→   859→Task: Auth (NextAuth+bcrypt+TOTP) + CSP/CSRF/rate-limit middleware + institutional login screen
+   860→   860→
+   861→   861→Work Log:
+   862→   862→- Read worklog (Tasks 1, 2-a/b/c, 3, 5-kickoff) and existing files (page.tsx, providers.tsx, next.config.ts, .env, api-client.ts, instruments route, health route, app-shell, globals.css).
+   863→   863→- Created `src/lib/auth.config.ts` — NextAuth v4 options:
+   864→   864→  • Credentials provider with email + password (+ optional TOTP).
+   865→   865→  • `MERIDIAN_ADMIN_PASSWORD_HASH` (bcrypt) wins; else auto-hash `MERIDIAN_ADMIN_PASSWORD` (bcryptjs, cost 10, cached at module scope); else fall back to default `Meridian@2025` with a loud server-console warning banner.
+   866→   866→  • TOTP via otplib v13 `OTP` class (note: otplib v13 dropped the v12 `authenticator` singleton — switched to `new OTP({ strategy:'totp' })` + `verify({token,secret,epochTolerance:30})` + `generateURI({issuer,label,secret})`). TOTP only enforced when `MERIDIAN_TOTP_SECRET` env set.
+   867→   867→  • JWT session, maxAge 8h, rolling refresh. Session cookie httpOnly + SameSite=Lax (+ `__Secure-` prefix in prod).
+   868→   868→  • `NEXTAUTH_SECRET` from env (warns + uses dev default if missing/short).
+   869→   869→  • Callbacks propagate email through JWT → session.
+   870→   870→  • `pages.signIn = "/"` (login is rendered inline, no separate route).
+   871→   871→- Created `src/app/api/auth/[...nextauth]/route.ts` — exports GET/POST from `NextAuth(authOptions)`.
+   872→   872→- Created `src/lib/auth.ts` — `getSession()` + `requireAuth()` (throws `UnauthorizedError` with `status:401`) + class export for typed catches.
+   873→   873→- Updated `src/components/providers.tsx` — wraps children in `<SessionProvider>` (next-auth/react) then `<QueryClientProvider>` (kept existing QueryClient config).
+   874→   874→- Updated `src/app/page.tsx` — `<Providers><Gate/></Providers>` where `Gate` uses `useSession()`: loading→dark spinner; unauthenticated→`<LoginScreen/>`; authenticated→`<AppShell/>`. (SessionProvider must wrap Gate so useSession works.)
+   875→   875→- Created `src/components/terminal/login-screen.tsx` — institutional dark card on #0b0e13/#151920/#262b33 palette matching the terminal. Email + password (+ TOTP field gated by `NEXT_PUBLIC_TOTP_ENABLED==='1'`). Submits via `signIn('credentials', {redirect:false})`, on error toasts; on success reloads so SessionProvider refetches. Footer note "Single-user terminal · credentials from env" + configured admin email hint from `NEXT_PUBLIC_ADMIN_EMAIL`.
+   876→   876→- Created `src/app/api/auth/totp-setup/route.ts` — `GET`, requires auth via `requireAuth()`. If `MERIDIAN_TOTP_SECRET` set → `{enabled:true}`. Else generates fresh base32 secret + otpauth URL via otplib v13. User must persist secret + set `NEXT_PUBLIC_TOTP_ENABLED=1` + restart.
+   877→   877→- Created `src/middleware.ts` (Next.js 16 — runs as deprecated `middleware` but still functional; logs a deprecation hint, no behavior impact):
+   878→   878→  • Applies security headers to ALL matched routes: CSP (`default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' wss: ws: https:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'`), X-Content-Type-Options nosniff, X-Frame-Options DENY, Referrer-Policy strict-origin-when-cross-origin, Permissions-Policy camera/mic/geo off, HSTS 1y.
+   879→   879→  • Auth gate via `next-auth/jwt` `getToken()`: only `/api/v1/health` is public; all other `/api/v1/*` require a valid JWT cookie, else `401 {ok:false,error:'Unauthorized'}`.
+   880→   880→  • Rate-limit: in-memory sliding window per IP (`x-forwarded-for` → `x-real-ip` → 'unknown'), 120 req/min on `/api/v1/*`. On exceed → `429 {ok:false,error:'Rate limit exceeded'}` + `Retry-After`. X-RateLimit-Remaining/Limit on success.
+   881→   881→  • CSRF: for POST/PUT/PATCH/DELETE on `/api/v1/*`, validates same-origin via `Origin` header host vs request `Host` (or `X-Requested-With: XMLHttpRequest` opt-in). Mismatch → `403 {ok:false,error:'CSRF check failed'}`.
+   882→   882→  • Matcher excludes `_next/static`, `_next/image`, `favicon.ico`, `logo.svg`, `robots.txt` (those get headers from next.config.ts fallback).
+   883→   883→- Updated `next.config.ts` — added async `headers()` returning the same security headers as a static fallback for static assets that bypass middleware. Kept existing config (output:standalone, ignoreBuildErrors, reactStrictMode:false).
+   884→   884→- Updated `.env` — appended documented auth block (kept `DATABASE_URL`): `MERIDIAN_ADMIN_EMAIL=admin@meridian.local`, `MERIDIAN_ADMIN_PASSWORD=Meridian@2025`, `MERIDIAN_ADMIN_PASSWORD_HASH=` (empty → auto-hash), `MERIDIAN_TOTP_SECRET=` (empty → 2FA off), `NEXT_PUBLIC_TOTP_ENABLED=0`, `NEXT_PUBLIC_ADMIN_EMAIL=admin@meridian.local`, `NEXTAUTH_SECRET=meridian-dev-secret-change-in-production-32charsmin`, `NEXTAUTH_URL=http://localhost:3000`. Added top-of-file comment block warning to change password in production.
+   885→   885→- Lint: `bun run lint` → 0 errors, 0 warnings (after removing 6 unused `eslint-disable no-console` directives — `no-console` is already off in the project's eslint config).
+   886→   886→
+   887→   887→Verification (curl, dev server on :3000):
+   888→   888→- `GET /api/v1/instruments` no cookie → **401** `{"ok":false,"error":"Unauthorized"}` ✅
+   889→   889→- `GET /api/v1/health` no cookie → **200** (public) ✅
+   890→   890→- All other `/api/v1/*` (watchlist, portfolio, alerts, signals, risk/summary, market-summary, quotes) no cookie → **401** ✅
+   891→   891→- Security headers present on `/` (CSP, X-Content-Type-Options, X-Frame-Options DENY, Referrer-Policy, Permissions-Policy, HSTS) ✅
+   892→   892→- Login flow: GET /api/auth/csrf → POST /api/auth/callback/credentials (email=admin@meridian.local, password=Meridian@2025) → 200, `next-auth.session-token` cookie set (httpOnly, SameSite=Lax) ✅
+   893→   893→- GET /api/auth/session with cookie → `{user:{name:'Admin',email:'admin@meridian.local'},expires:<+8h>}` ✅
+   894→   894→- GET /api/v1/instruments with cookie → **200** (real instrument data returned) ✅
+   895→   895→- POST /api/v1/seed with cookie + same-host Origin → **200** `{ok:true,data:{seeded:true}}` ✅
+   896→   896→- POST /api/v1/seed with cookie + wrong Origin (http://evil.example.com) → **403** `{"ok":false,"error":"CSRF check failed"}` ✅
+   897→   897→- GET /api/auth/totp-setup with cookie → **200** `{enabled:false, secret, otpauthUrl}` ✅
+   898→   898→- Root page `/` renders without server error (HTTP 200, title correct) ✅
+   899→   899→
+   900→   900→Stage Summary:
+   901→   901→- Files created: `src/lib/auth.config.ts`, `src/lib/auth.ts`, `src/app/api/auth/[...nextauth]/route.ts`, `src/app/api/auth/totp-setup/route.ts`, `src/components/terminal/login-screen.tsx`, `src/middleware.ts`.
+   902→   902→- Files modified: `src/components/providers.tsx`, `src/app/page.tsx`, `next.config.ts`, `.env`.
+   903→   903→- Existing `/api/v1/*` route handlers (instruments, watchlist, prices, quotes, technicals, fundamentals, market-summary, health, alerts, signals, portfolio, risk, seed) were NOT modified — middleware enforces auth/CSRF/rate-limit around them.
+   904→   904→- Default login credentials (from .env): **email `admin@meridian.local` · password `Meridian@2025`**. TOTP disabled by default (`MERIDIAN_TOTP_SECRET` empty, `NEXT_PUBLIC_TOTP_ENABLED=0`).
+   905→   905→- Protected: all `/api/v1/*` except `/api/v1/health` (public for unauth health checks). `/api/auth/*` is intentionally not auth-checked (NextAuth handles its own session bootstrapping). Root `/` page renders LoginScreen when unauthenticated, AppShell when authenticated — no separate `/login` route (system rule honored).
+   906→   906→- To enable 2FA later: as the admin, `GET /api/auth/totp-setup` (returns secret + otpauth URL) → scan in authenticator app → set `MERIDIAN_TOTP_SECRET=<secret>` + `NEXT_PUBLIC_TOTP_ENABLED=1` in `.env` → restart. Login screen will then show the TOTP field and `authorize()` will verify the code.
+   907→   907→- Lint: clean (0 errors / 0 warnings).
+   908→   908→
+   909→   909→---
+   910→   910→Task ID: 5-3
+   911→   911→Agent: full-stack-developer (WebSocket)
+   912→   912→Task: Implement PRD FR-0.1 real-time price streaming — a socket.io mini-service on port 3001 that aggregates client subscriptions into a single upstream Binance combined trade-stream WS (crypto) + a Yahoo Finance 15s poller (IDX .JK, forex =X, gold GC=F), and a React hook + QuoteTable/StatusBar integration that overlays live ticks on top of the existing React Query polled quotes with flash-up/flash-down animation and a LIVE pulse dot.
+   913→   913→
+   914→   914→Work Log:
+   915→   915→- Read worklog (Tasks 1, 2-a/b/c, 3, 5-kickoff, 5-1+5-2 security) and existing files (quote-table.tsx, status-bar.tsx, yahoo.ts, globals.css, api-client.ts, examples/websocket/{server,frontend}, Caddyfile).
+   916→   916→- Wrote `mini-services/ws-prices/index.ts` (port 3001, socket.io v4 server, self-contained — imports ONLY socket.io + node:http + bun globals):
+   917→   917→  • Client registry: `Map<socketId, Set<ticker>>`. Per-symbol last-price cache so a newly-subscribing client immediately receives the latest tick.
+   918→   918→  • Symbol classification: `isCryptoSymbol()` — Yahoo markers (`.JK`, `=X`, `GC=F`) → Yahoo; otherwise Binance trade stream (uppercase alnum, e.g. `BTCUSDT`).
+   919→   919→  • Binance combined stream: `wss://stream.binance.com:9443/stream?streams=btcusdt@trade/ethusdt@trade/...` (lowercase). ONE upstream connection for the UNION of all subscribed crypto symbols across all clients. On trade message: parse `{stream, data:{s, p, T}}`, broadcast `{ticker, price, time}` to subscribed clients.
+   920→   920→  • Reconcile-on-change: when the aggregated crypto symbol set changes (client subscribe/unsubscribe/disconnect), the existing upstream is torn down and a fresh one opened with the new stream list. Reconnect with exponential backoff (1s → 30s cap) on accidental close; intentional close (set change or shutdown) does not reconnect.
+   921→   921→  • Yahoo poller: 15s default, 60s for 5min after a 429. Polls `https://query2.finance.yahoo.com/v8/finance/chart/{ticker}?range=1d&interval=1m` with Mozilla User-Agent, extracts `meta.regularMarketPrice`. Sequential (parallel triggers 429). Fires one immediate cycle on symbol-set change so the UI doesn't wait 15s for the first tick.
+   922→   922→  • HTTP `/health` returns `{ok, clients, upstreamCrypto, pollingYahoo, yahooBackoff}`.
+   923→   923→  • socket.io server uses the DEFAULT path `/socket.io/` (NOT `path:'/'`) because engine.io prefix-matches the path against every incoming URL — `path:'/'` would match `/health` too and clobber the HTTP response with `{"code":0,"message":"Transport unknown"}`. Caddy is query-only (`XTransformPort`), so it doesn't care which path socket.io uses internally.
+   924→   924→  • CORS: `{ origin: true, credentials: true }` — acceptable for dev (gateway is same-origin from the browser's perspective via XTransformPort).
+   925→   925→  • Resilience: `process.on('SIGPIPE')` swallowed (writing to a closed socket mid-tick was killing the daemon before this was added). `uncaughtException` + `unhandledRejection` log but never crash. SIGTERM/SIGINT cleanly tear down Binance WS + Yahoo timer + io + httpServer before exit.
+   926→   926→  • Connection lifecycle logged to stdout (visible in /tmp/ws-prices.log): client connect/disconnect, subscribe/unsubscribe, Binance upstream connect/close, Yahoo backoff transitions.
+   927→   927→- Installed `socket.io-client@4.8.3` in the main project (`bun add socket.io-client`).
+   928→   928→- Wrote `src/hooks/use-live-prices.ts` (`'use client'`):
+   929→   929→  • Module-level singleton socket — multiple components share one connection. Lazy-init on first consumer mount via `getSocket()`.
+   930→   930→  • Connection: `io({ path: '/socket.io/', transports: ['websocket'], query: { XTransformPort: '3001' } })` — same-origin through Caddy, query-based routing to localhost:3001. NO direct localhost URL.
+   931→   931→  • Status: module-level `socketStatus` + listener set. Hook reads initial state lazily via `useState(() => socketStatus)` (avoids the lint error `react-hooks/set-state-in-effect`). Status updates flow to all consumers via the listener set.
+   932→   932→  • Prices: module-level `prices: Record<ticker, {price, time, flash}>` (mutated in place — same object reference; consumers read latest on re-render). On `price` event: compute flash direction (up if price increased, down if decreased, null if unchanged). Auto-clear flash after 700ms (matches the `.flash-up` / `.flash-down` CSS keyframe duration in globals.css) via per-ticker setTimeout.
+   933→   933→  • Re-render batching: price updates schedule a single `requestAnimationFrame`-batched `setTick` so a burst of ticks doesn't trigger a render storm.
+   934→   934→  • Public API: `{ status, prices, subscribe(symbols), unsubscribe(symbols) }`. `subscribe`/`unsubscribe` emit `subscribe`/`unsubscribe` events to the server. Singleton stays alive on unmount — only the component's subscriptions are dropped.
+   935→   935→- Updated `src/components/terminal/quote-table.tsx`:
+   936→   936→  • Calls `useLivePrices()`. Collects the union of tickers of all visible rows.
+   937→   937→  • On ticker-set change, calls `live.subscribe(tickers)`; on cleanup, `live.unsubscribe(previous)`. The ws-prices service aggregates across all clients so re-subscribing is idempotent.
+   938→   938→  • For each row: if `live.prices[ticker]` exists, renders that price INSTEAD of `quote.price`. `changePct24h`, `high24h`, `low24h`, `volume24h` still come from the polled quote (the WS only gives price ticks).
+   939→   939→  • Flash animation: the price is wrapped in a `<span key={live-${time}} className={cn('inline-block px-1 -mx-1 rounded-sm', flashClass)}>`. The React `key` is the tick timestamp so the span RE-MOUNTS on every fresh tick — this re-triggers the CSS animation on back-to-back up-ticks (without the key change, the `.flash-up` class would stay applied and the animation would only run once for the first tick).
+   940→   940→  • LIVE pulse dot: a tiny 1×1px green dot (`bg-[#2e9e6d] animate-live-pulse`) appears next to the symbol when `live.status === 'connected'` AND a live entry exists for that ticker.
+   941→   941→  • Existing React Query polling (`useQuotes` every 30s) is UNCHANGED — it remains the fallback + source of 24h stats. If WS is disconnected, the polled `quote.price` is shown with no error UI.
+   942→   942→- Updated `src/components/terminal/status-bar.tsx`:
+   943→   943→  • Calls `useLivePrices()` (read-only — does NOT subscribe to symbols here).
+   944→   944→  • Added a `WsIndicator` next to the clock: green `Radio` icon + "WS LIVE" when connected; amber spinner + "WS …" when connecting; red `WifiOff` + "WS OFF" when disconnected. The existing clock pulse dot is preserved.
+   945→   945→- Lint: `bun run lint` exits 0 (1 error + 1 warning fixed: removed `setStatusState(socketStatus)` synchronous call in effect by switching to `useState(() => socketStatus)` lazy initializer; removed unused `eslint-disable-next-line` directive by adding `live` to the effect deps).
+   946→   946→- End-to-end smoke test (bun client → ws-prices service):
+   947→   947→  • Crypto: subscribe `["BTCUSDT","ETHUSDT","SOLUSDT"]` → Binance upstream connects (3 streams) → client receives trade ticks for all three → disconnect cleanly tears down upstream. ✓
+   948→   948→  • Mixed: subscribe `["GC=F","EURUSD=X","BTCUSDT"]` → Binance upstream for BTCUSDT only; Yahoo poller fires immediately for GC=F (gold, $4187.3) and EURUSD=X (forex, 1.144) → all three tickers received. ✓
+   949→   949→  • Service survives multiple sequential client connect/disconnect cycles (the SIGPIPE handler was the fix — before it, the daemon died when a client disconnected mid-tick-stream). ✓
+   950→   950→- Started the service: `cd /home/z/my-project/mini-services/ws-prices && nohup bun index.ts > /tmp/ws-prices.log 2>&1 < /dev/null & disown`. (Used `bun index.ts` instead of `bun --hot index.ts` because `--hot`'s file-watcher parent process was orphaning the actual server child after the launching shell exited — `bun index.ts` keeps the server in the foreground of the daemonized shell. The dev script in package.json is unchanged — `bun --hot index.ts` still works for interactive development.)
+   951→   951→- Verified: `curl -s http://localhost:3001/health` → `{"ok":true,"clients":0,"upstreamCrypto":[],"pollingYahoo":[],"yahooBackoff":false}` ✓
+   952→   952→- Verified: `curl -sI http://localhost:3000/` → `HTTP/1.1 200 OK` (main app still loads; CSP allows `connect-src 'self' wss: ws: https:` so the browser-side socket.io connection is permitted). ✓
+   953→   953→
+   954→   954→Stage Summary:
+   955→   955→Files created:
+   956→   956→- `mini-services/ws-prices/index.ts` — socket.io v4 server on port 3001 (Binance combined trade-stream WS + Yahoo 15s poller + /health HTTP endpoint).
+   957→   957→- `src/hooks/use-live-prices.ts` — singleton socket.io-client hook (`useLivePrices()` → `{status, prices, subscribe, unsubscribe}`).
+   958→   958→
+   959→   959→Files modified:
+   960→   960→- `src/components/terminal/quote-table.tsx` — overlays live WS prices on the Last column with flash-up/flash-down animation; adds a 1×1px green LIVE pulse dot next to the symbol when connected. React Query polling is unchanged (fallback + 24h stats source).
+   961→   961→- `src/components/terminal/status-bar.tsx` — adds a WS status indicator (`WS LIVE` / `WS …` / `WS OFF`) next to the clock.
+   962→   962→- `package.json` — added `socket.io-client@^4.8.3`.
+   963→   963→
+   964→   964→Files NOT touched (per ownership rules):
+   965→   965→- `src/app/page.tsx`, `src/components/providers.tsx`, `src/app/layout.tsx` (security agent).
+   966→   966→- `src/middleware.ts`, `next.config.ts` (security agent).
+   967→   967→- `prisma/schema.prisma` (other agents).
+   968→   968→- `src/app/api/v1/*` route handlers (untouched).
+   969→   969→- `src/lib/api-client.ts` (untouched — kept the hook in `src/hooks/` as instructed).
+   970→   970→
+   971→   971→How to start the service:
+   972→   972→```bash
+   973→   973→cd /home/z/my-project/mini-services/ws-prices && nohup bun index.ts > /tmp/ws-prices.log 2>&1 < /dev/null & disown
+   974→   974→# (use `bun --hot index.ts` for interactive dev with auto-restart on file changes)
+   975→   975→curl -s http://localhost:3001/health
+   976→   976→```
+   977→   977→
+   978→   978→How the frontend connects:
+   979→   979→- `useLivePrices()` (called by `QuoteTable` and `StatusBar`) lazy-inits a singleton `socket.io-client` connection via `io({ path: '/socket.io/', transports: ['websocket'], query: { XTransformPort: '3001' } })` — same-origin through the Caddy gateway (port 81 externally → localhost:3001 based on the `XTransformPort` query). NEVER a direct `localhost:3001` URL.
+   980→   980→- `QuoteTable` collects the tickers of all visible rows and calls `subscribe(tickers)` on mount / ticker-set change; `unsubscribe(previous)` on cleanup.
+   981→   981→- The ws-prices service aggregates subscriptions across ALL connected clients into ONE upstream Binance WS (union of crypto symbols) and ONE Yahoo poller (union of non-crypto symbols), reconnecting the upstream only when the aggregated set changes.
+   982→   982→
+   983→   983→Fallback behavior:
+   984→   984→- If WS is disconnected: `live.prices[ticker]` is undefined → `QuoteTable` falls back to the polled `quote.price` silently (no error UI). The `StatusBar` shows `WS OFF` in red.
+   985→   985→- If a specific ticker has no live entry yet (just subscribed, no tick received): polled `quote.price` is shown until the first tick arrives. The ws-prices service pushes a cached last-price on subscribe (if available) so the live overlay appears immediately for previously-seen tickers.
+   986→   986→- If WS reconnects: the singleton socket.io-client auto-reconnects (infinite attempts, 1s → 10s backoff). On reconnect, `QuoteTable`'s `useEffect` re-runs `subscribe(tickers)` (the dependency `live` changes when status flips back to connected, re-triggering the effect). Actually — `live` is from useMemo with deps `[status, prices, subscribe, unsubscribe]` and `subscribe`/`unsubscribe` are stable, so `live` changes when `status` changes — yes, the effect re-runs on reconnect and re-subscribes. ✓
+   987→   987→- If Binance upstream disconnects (network hiccup): service reconnects with exponential backoff (1s → 30s cap). Clients stay subscribed; ticks resume when upstream reconnects.
+   988→   988→- If Yahoo 429s: poller switches to 60s cadence for 5min, then back to 15s. Clients see stale prices during backoff (no error UI — the last cached price stays).
+   989→   989→
+   990→   990→Flash animation + LIVE indicator mechanism:
+   991→   991→- On each `price` event, the hook compares the new price to the previous cached price for that ticker. If higher → `flash='up'`; if lower → `flash='down'`; if equal → `flash=null`.
+   992→   992→- The flash flag is auto-cleared after 700ms via a per-ticker `setTimeout` (matches the `meridian-flash-up`/`meridian-flash-down` CSS keyframe duration in `globals.css`).
+   993→   993→- In `QuoteTable`, the price `<span>` uses `key={live-${liveEntry.time}}` (the tick timestamp). Because React remounts an element when its key changes, each fresh tick produces a brand-new span with the `.flash-up` or `.flash-down` class freshly applied → the CSS animation runs from scratch. Without the key change, back-to-back up-ticks would leave `.flash-up` applied continuously and the animation would only fire once (CSS animations trigger on class application, not on class persistence).
+   994→   994→- When the flash auto-clears (700ms later), the hook re-renders the consumer; the span's className drops the flash class. The animation has already ended (transparent background), so removing the class is invisible.
+   995→   995→- The LIVE pulse dot is a `<span className="h-1 w-1 rounded-full bg-[#2e9e6d] animate-live-pulse" />` placed next to the symbol. It renders only when `live.status === 'connected'` AND a live entry exists for that ticker — i.e., the user is seeing a real-time price, not a polled fallback. The `animate-live-pulse` class (defined in globals.css) is a 1.8s ease-in-out opacity pulse (1.0 → 0.35 → 1.0).
+   996→   996→- The `StatusBar` WS indicator mirrors the same status: green `Radio` icon + "WS LIVE" (connected), amber `Loader2` spinner + "WS …" (connecting), red `WifiOff` + "WS OFF" (disconnected).
+   997→   997→
+   998→   998→Lint: clean (`bun run lint` exits 0). Mini-service is plain TypeScript run by bun (no separate tsconfig — bun infers types from `bun-types` globally); runtime globals (`WebSocket`, `fetch`, `AbortController`) are bun built-ins, verified via `bun -e 'console.log(typeof WebSocket)'`.
+   999→   999→
+  1000→  1000→Mini-service health endpoint: `curl -s http://localhost:3001/health` → `{"ok":true,"clients":0,"upstreamCrypto":[],"pollingYahoo":[],"yahooBackoff":false}` ✓
+  1001→  1001→
+  1002→  1002→Main app: `curl -sI http://localhost:3000/` → `HTTP/1.1 200 OK` ✓
+  1003→  1003→
+  1004→  1004→---
+  1005→  1005→Task ID: 5-3 (verification + minor hardening)
+  1006→  1006→Agent: full-stack-developer (WebSocket — verification pass)
+  1007→  1007→Task: Verify the Task 5-3 WebSocket real-time price streaming implementation is in place, matches the user spec, the service is running, the health endpoint + main app return 200, and the end-to-end subscribe→price flow works through both the direct port and the Caddy gateway.
+  1008→  1008→
+  1009→  1009→Work Log:
+  1010→  1010→- Read worklog (Tasks 1, 2-a/b/c, 5-kickoff, 5-1+5-2 security, 5-3 first pass) and existing files: `mini-services/ws-prices/index.ts`, `src/hooks/use-live-prices.ts`, `src/components/terminal/quote-table.tsx`, `src/components/terminal/status-bar.tsx`, `src/app/globals.css`, `Caddyfile`, `mini-services/ws-prices/package.json`.
+  1011→  1011→- Found the existing Task 5-3 implementation by the previous agent was substantively complete (Binance combined trade-stream WS, Yahoo 15s/60s-backoff poller, socket.io v4 server on :3001, singleton hook with rAF-batched re-renders, flash-up/flash-down with key-remount trick, LIVE pulse dot, StatusBar WS indicator). Two minor deviations from the user spec were identified and fixed.
+  1012→  1012→
+  1013→  1013→Hardening / spec-compliance fixes:
+  1014→  1014→- `src/hooks/use-live-prices.ts`: changed `transports: ["websocket"]` → `transports: ["websocket", "polling"]` to match the user spec exactly. WebSocket stays first (lowest latency); HTTP long-polling is the fallback if the WS upgrade is blocked (e.g. strict corporate proxies). Both transports traverse the Caddy gateway via `?XTransformPort=3001`.
+  1015→  1015→- `mini-services/ws-prices/index.ts`: added an explicit `process.on("SIGHUP", ...)` ignore handler. Rationale — the previous agent started the service with `nohup bun index.ts ... & disown` and reported it stable, but in the current sandbox session the daemonized process died silently within ~10s of the launching shell exiting. Adding the SIGHUP ignore inside the bun process makes the daemon resilient regardless of how the launcher handles SIGHUP propagation. (Bun's runtime can re-assign signal handlers, so `nohup`'s inherited ignore isn't guaranteed to survive — explicit `process.on("SIGHUP")` is belt-and-braces.)
+  1016→  1016→- Discovered the right daemonization pattern for this sandbox: `(nohup setsid bun index.ts > /tmp/ws-prices.log 2>&1 < /dev/null &)`. The subshell `( ... )` exits immediately after backgrounding the inner command, reparenting the bun process to PID 1 (init) — `setsid` makes it a new session leader so no controlling TTY is inherited, and `nohup` is the outer defense against SIGHUP. Plain `nohup ... & disown` (without the subshell wrapper) was insufficient: the bun process kept dying silently ~10s after the launching shell exited, even with `disown` and even with the SIGHUP ignore handler. The subshell + setsid combination yields a process whose PPID is 1 (verified via `ps -ef`) and which survives indefinitely. The `bun --hot index.ts` dev script in `package.json` is intentionally NOT used for daemon mode (the file-watcher parent orphans the server child after the launching shell exits — same finding as the previous agent).
+  1017→  1017→
+  1018→  1018→Verification:
+  1019→  1019→- Lint: `bun run lint` → exit 0, 0 errors, 0 warnings (clean). ✓
+  1020→  1020→- Service start: `(nohup setsid bun index.ts > /tmp/ws-prices.log 2>&1 < /dev/null &)` from `/home/z/my-project/mini-services/ws-prices/`. ✓
+  1021→  1021→- Health endpoint: `curl -s http://localhost:3001/health` → `{"ok":true,"clients":0,"upstreamCrypto":[],"pollingYahoo":[],"yahooBackoff":false}` ✓
+  1022→  1022→- Main app: `curl -sI http://localhost:3000/` → `HTTP/1.1 200 OK` ✓
+  1023→  1023→- Service process: `ps -ef | grep index.ts` → `z 9873 1 0 14:11 ? 00:00:00 bun index.ts` (PPID=1, fully detached, stable across multiple 30+s observation windows). ✓
+  1024→  1024→- Direct-socket smoke test (`socket.io-client` → `http://localhost:3001`): subscribe `["BTCUSDT","ETHUSDT","GC=F"]` → received ticks for `GC=F @ 4187.3` (Yahoo poll, ~immediate) and `BTCUSDT @ 62738.01` (Binance trade stream, sub-second). Service log shows Binance upstream connect → trade ticks → clean disconnect tears down the upstream (no zombie connection). ✓
+  1025→  1025→- Gateway smoke test (`socket.io-client` → `http://localhost:81` with `?XTransformPort=3001` query, matching exactly the browser-side `io({ path:'/socket.io/', transports:['websocket','polling'], query:{XTransformPort:'3001'} })` pattern from `use-live-prices.ts`): subscribe `["BTCUSDT"]` → received tick `BTCUSDT @ 62738.01` over the Caddy-forwarded socket. Confirms the gateway routing for the WS upgrade + the XTransformPort query works end-to-end. ✓
+  1026→  1026→
+  1027→  1027→Stage Summary:
+  1028→  1028→Files modified (only):
+  1029→  1029→- `src/hooks/use-live-prices.ts` — added `polling` to the socket.io transports list (was websocket-only; now `["websocket","polling"]` per user spec).
+  1030→  1030→- `mini-services/ws-prices/index.ts` — added `process.on("SIGHUP", ...)` ignore handler for daemon-mode stability.
+  1031→  1031→
+  1032→  1032→Files NOT touched (per ownership rules):
+  1033→  1033→- `src/app/page.tsx`, `src/components/providers.tsx`, `src/app/layout.tsx` (security agent).
+  1034→  1034→- `src/middleware.ts`, `next.config.ts`, `.env` (security agent).
+  1035→  1035→- `prisma/schema.prisma` (other agents).
+  1036→  1036→- `src/app/api/v1/*` route handlers (untouched).
+  1037→  1037→- `src/lib/api-client.ts` (untouched — kept the hook in `src/hooks/` as instructed).
+  1038→  1038→- `src/components/terminal/quote-table.tsx` and `status-bar.tsx` (verified already correct from the first 5-3 pass — no changes needed).
+  1039→  1039→- `src/app/globals.css` (verified `.flash-up` / `.flash-down` / `.animate-live-pulse` keyframes are in place — no changes needed).
+  1040→  1040→- `Caddyfile` (the `?XTransformPort=*` reverse_proxy block already covers port 3001 — no changes needed).
+  1041→  1041→
+  1042→  1042→How flash + LIVE indicator works (recap for downstream agents):
+  1043→  1043→- On each `price` event, the singleton hook compares the new price to the previous cached price for that ticker: `>` → `flash="up"`, `<` → `flash="down"`, `==` → `flash=null`. The flash flag is auto-cleared after 700ms via a per-ticker `setTimeout` (matches the `meridian-flash-up`/`meridian-flash-down` CSS keyframe duration in `globals.css`).
+  1044→  1044→- In `QuoteTable`, the price `<span>` uses `key={live-${liveEntry.time}}` (the tick timestamp). Because React remounts an element when its key changes, each fresh tick produces a brand-new span with the `.flash-up`/`.flash-down` class freshly applied → the CSS animation runs from scratch. Without the key change, back-to-back up-ticks would leave `.flash-up` applied continuously and the animation would only fire once.
+  1045→  1045→- The LIVE pulse dot is a `<span className="h-1 w-1 rounded-full bg-[#2e9e6d] animate-live-pulse" />` placed next to the symbol. It renders only when `live.status === "connected"` AND a live entry exists for that ticker — i.e. the user is seeing a real-time price, not a polled fallback. The `animate-live-pulse` class (in `globals.css`) is a 1.8s ease-in-out opacity pulse (1.0 → 0.35 → 1.0).
+  1046→  1046→- The `StatusBar` WS indicator mirrors the same status: green `Radio` icon + "WS LIVE" (connected), amber `Loader2` spinner + "WS …" (connecting), red `WifiOff` + "WS OFF" (disconnected).
+  1047→  1047→
+  1048→  1048→Fallback behavior (recap):
+  1049→  1049→- WS disconnected: `live.prices[ticker]` is undefined → `QuoteTable` falls back to the polled `quote.price` silently (no error UI). StatusBar shows `WS OFF` in red.
+  1050→  1050→- Ticker just subscribed, no tick yet: polled `quote.price` is shown until the first tick arrives. The ws-prices service pushes a cached last-price on subscribe (if available) so the live overlay appears immediately for previously-seen tickers.
+  1051→  1051→- WS reconnects: socket.io-client auto-reconnects (infinite attempts, 1s → 10s backoff). On reconnect, `QuoteTable`'s `useEffect` re-runs `subscribe(tickers)` (the `live` memo changes when `status` flips, re-triggering the effect).
+  1052→  1052→- Binance upstream disconnects: service reconnects with exponential backoff (1s → 30s cap). Clients stay subscribed; ticks resume when upstream reconnects.
+  1053→  1053→- Yahoo 429s: poller switches to 60s cadence for 5min (`yahooBackoff=true` in `/health`), then back to 15s. Clients see stale prices during backoff (last cached price stays).
+  1054→  1054→
+  1055→  1055→How to start the service (stable daemon pattern for this sandbox):
+  1056→  1056→```bash
+  1057→  1057→cd /home/z/my-project/mini-services/ws-prices && \
+  1058→  1058→  (nohup setsid bun index.ts > /tmp/ws-prices.log 2>&1 < /dev/null &)
+  1059→  1059→# (use `bun --hot index.ts` for interactive dev with auto-restart on file changes)
+  1060→  1060→sleep 1 && curl -s http://localhost:3001/health
+  1061→  1061→```
+  1062→  1062→
+  1063→  1063→Lint: clean (`bun run lint` exits 0). Mini-service is plain TypeScript run by bun (no separate tsconfig — bun infers types from `bun-types` globally); runtime globals (`WebSocket`, `fetch`, `AbortController`) are bun built-ins.
+  1064→  1064→
+  1065→  1065→Mini-service health endpoint: `curl -s http://localhost:3001/health` → `{"ok":true,"clients":0,"upstreamCrypto":[],"pollingYahoo":[],"yahooBackoff":false}` ✓
+  1066→  1066→
+  1067→  1067→Main app: `curl -sI http://localhost:3000/` → `HTTP/1.1 200 OK` ✓
+  1068→  1068→
+  1069→  1069→
+  1070→  1070→---
+  1071→  1071→Task ID: 5-4
+  1072→  1072→Agent: full-stack-developer (Telegram Bot notifications)
+  1073→  1073→Task: Implement Telegram Bot notifications for MERIDIAN Terminal (PRD FR-2.3,
+  1074→  1074→gap item #3) — notification service lib, config endpoint, fire-and-forget
+  1075→  1075→hook-ins into the signal engines (alerts/evaluate + signals/scan), a
+  1076→  1076→Settings UI panel in the Data Sources module, and the env block.
+  1077→  1077→
+  1078→  1078→Work Log:
+  1079→  1079→- Read worklog (Tasks 1, 2-a, 2-b, 2-c, 5-kickoff, 5-1+5-2 security, 5-3
+  1080→  1080→  WebSocket) and existing files (alerts/evaluate route, signals/scan route,
+  1081→  1081→  sources-view.tsx, api-client.ts, panel.tsx, api.ts, types.ts, package.json,
+  1082→  1082→  .env, dev.log). Confirmed `node-telegram-bot-api` + `@types/node-telegram-bot-api`
+  1083→  1083→  are already installed (Task 5-kickoff installed them).
+  1084→  1084→- Created `src/lib/notifications/telegram.ts`:
+  1085→  1085→  • Lazy singleton `node-telegram-bot-api` instance via `getBot()`. The bot
+  1086→  1086→    is constructed only on the first send attempt, using
+  1087→  1087→    `require("node-telegram-bot-api")` (lazy CommonJS require keeps the
+  1088→  1088→    module load cheap when notifications are unused, and avoids bundling
+  1089→  1089→    the lib into client builds).
+  1090→  1090→  • Reads `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` from env (both must be
+  1091→  1091→    non-empty trimmed strings for `isConfigured()` to return true).
+  1092→  1092→  • `isConfigured(): boolean` helper.
+  1093→  1093→  • `sendMessage(text: string): Promise<void>` — sends with
+  1094→  1094→    `parse_mode: "HTML"` and `disable_web_page_preview: true`. On
+  1095→  1095→    unconfigured state → no-op + single `console.debug` line. On failure
+  1096→  1096→    (429/network/API) → `console.warn("[telegram] sendMessage failed: …")`
+  1097→  1097→    and swallow. NEVER throws (notifications must not break the data path).
+  1098→  1098→  • `notifySignal(params)` formats:
+  1099→  1099→    ```
+  1100→  1100→    <b>🚨 MERIDIAN Signal</b>
+  1101→  1101→    <b>{symbol}</b> ({assetClass}) — {signalType} [{severity}]
+  1102→  1102→    {message}
+  1103→  1103→    {price line if present}
+  1104→  1104→    <i>{timestamp ISO}</i>
+  1105→  1105→    ```
+  1106→  1106→  • `notifyAlertTriggered(params)` formats a similar HTML block with
+  1107→  1107→    metric/operator/threshold/observed + optional price line + ISO timestamp.
+  1108→  1108→  • Small `escapeHtml()` helper escapes `&`/`<`/`>` in user-controlled
+  1109→  1109→    text (numbers are formatted via `.toFixed(4)`).
+  1110→  1110→- Created `src/app/api/v1/notifications/telegram/route.ts`:
+  1111→  1111→  • `GET` → `{ ok:true, data:{ configured, chatId: TELEGRAM_CHAT_ID||null,
+  1112→  1112→    botTokenSet: !!TELEGRAM_BOT_TOKEN } }`. Never returns the token.
+  1113→  1113→    Auth enforced by the global middleware (no body change).
+  1114→  1114→  • `POST` body `{ test:true }` → sends `🧪 MERIDIAN Terminal — test
+  1115→  1115→    notification` to the configured chat via `sendMessage(...)`. Returns
+  1116→  1116→    `{ ok:true, data:{ sent:true } }`. When Telegram is not configured →
+  1117→  1117→    `{ ok:false, error:"Telegram not configured" }` (HTTP 400).
+  1118→  1118→  • Defensive body parsing: non-JSON / empty body → treated as `{}`;
+  1119→  1119→    explicit `test !== true` (or any other shape) → HTTP 400 with a
+  1120→  1120→    helpful error.
+  1121→  1121→  • Whole handler wrapped in try/catch → 500 on internal error.
+  1122→  1122→- Hooked `notifyAlertTriggered` into `src/app/api/v1/alerts/evaluate/route.ts`:
+  1123→  1123→  • Added the import line.
+  1124→  1124→  • Added a `void notifyAlertTriggered({...}).catch(...)` block immediately
+  1125→  1125→    after the `triggered.push({...})` call (i.e. right after the
+  1126→  1126→    `db.$transaction` that creates the SignalEvent and updates the alert).
+  1127→  1127→  • Fires on ALL ALERT_TRIGGER events (INFO/WARN/CRITICAL) — per spec.
+  1128→  1128→  • Handler structure unchanged — only the import + the 12-line fire-and-
+  1129→  1129→    forget block were added.
+  1130→  1130→- Hooked `notifySignal` into `src/app/api/v1/signals/scan/route.ts`:
+  1131→  1131→  • Added the import line.
+  1132→  1132→  • Added a `void notifySignal({...}).catch(...)` block immediately after
+  1133→  1133→    the `detected.push({...})` call (i.e. right after `db.signalEvent.create`).
+  1134→  1134→  • Guarded by `if (d.severity === "WARN" || d.severity === "CRITICAL")`
+  1135→  1135→    so VOLUME_SPIKE/BREAKOUT INFO events do not spam (BREAKOUT is INFO;
+  1136→  1136→    RSI_OB/OS are WARN; ANOMALY is CRITICAL — exactly matches the spec
+  1137→  1137→    guidance "Notify on WARN+CRITICAL only").
+  1138→  1138→  • Handler structure unchanged — only the import + the guarded 12-line
+  1139→  1139→    fire-and-forget block were added.
+  1140→  1140→- Updated `src/components/terminal/sources-view.tsx`:
+  1141→  1141→  • Added the imports: `Button` (shadcn), `useQuery`/`useMutation`/
+  1142→  1142→    `useQueryClient` (TanStack Query), `toast` (sonner), lucide icons
+  1143→  1143→    `Send`/`MessageSquare`/`Loader2`.
+  1144→  1144→  • Added the `TelegramConfigData` / `TelegramConfigResponse` interfaces.
+  1145→  1145→  • Added the inline `useTelegramConfig()` hook (kept in this file so
+  1146→  1146→    `src/lib/api-client.ts` stays untouched per spec). 30s staleTime.
+  1147→  1147→  • Added the `TelegramNotificationsPanel` component — renders a shadcn
+  1148→  1148→    `Panel` titled "Notifications" with subtitle "Telegram Bot · PRD
+  1149→  1149→    FR-2.3". Shows: configured/not-configured badge (green/red), bot
+  1150→  1150→    token presence ("set in env" / "missing"), chat ID (or "—"), and:
+  1151→  1151→      - When configured: a "Send test" button (POSTs `{test:true}` to
+  1152→  1152→        `/api/v1/notifications/telegram`). Toast on success
+  1153→  1153→        ("Telegram test message sent") / failure (with description).
+  1154→  1154→      - When not configured: a 4-step "How to enable" instruction list
+  1155→  1155→        (@BotFather → bot token; add bot to chat; get chat ID from
+  1156→  1156→        @userinfobot; set both env vars + restart).
+  1157→  1157→  • Rendered `<TelegramNotificationsPanel />` BELOW the existing Data
+  1158→  1158→    Sources panel in the left column (same `<div className="flex flex-col
+  1159→  1159→    gap-3 min-h-0">` wrapper). The Request Log panel stays in the right
+  1160→  1160→    column.
+  1161→  1161→- Appended the env block to `.env`:
+  1162→  1162→  ```
+  1163→  1163→  # ── Telegram Bot notifications (PRD FR-2.3). ─────────────────────────────
+  1164→  1164→  # Get the bot token from @BotFather (DM "create a bot" / `/newbot`).
+  1165→  1165→  # Get the chat ID from @userinfobot (numeric) or use "@channelusername".
+  1166→  1166→  # Leave empty to disable — notifications are silently skipped (no-op) and the
+  1167→  1167→  # data path is unaffected. After setting, restart the app to pick up the env.
+  1168→  1168→  TELEGRAM_BOT_TOKEN=
+  1169→  1169→  TELEGRAM_CHAT_ID=
+  1170→  1170→  ```
+  1171→  1171→  Both empty by default → unconfigured → silent no-op.
+  1172→  1172→- Verified `bun run lint` → exit 0, 0 errors, 0 warnings.
+  1173→  1173→
+  1174→  1174→Stage Summary:
+  1175→  1175→Files created:
+  1176→  1176→- `src/lib/notifications/telegram.ts` — lazy singleton Telegram bot
+  1177→  1177→  wrapper. Exports: `isConfigured`, `sendMessage`, `notifySignal`,
+  1178→  1178→  `notifyAlertTriggered`. All sends are no-ops when unconfigured and
+  1179→  1179→  swallow all errors (429/network/API) — never throws.
+  1180→  1180→- `src/app/api/v1/notifications/telegram/route.ts` — `GET` config
+  1181→  1181→  status + `POST {test:true}` to send a test message.
+  1182→  1182→
+  1183→  1183→Files modified (minimal edits):
+  1184→  1184→- `src/app/api/v1/alerts/evaluate/route.ts` — +1 import + 1 fire-and-
+  1185→  1185→  forget `notifyAlertTriggered({...}).catch(...)` block after the
+  1186→  1186→  SignalEvent is created. Notifies on ALL ALERT_TRIGGER events.
+  1187→  1187→- `src/app/api/v1/signals/scan/route.ts` — +1 import + 1 guarded
+  1188→  1188→  `notifySignal({...}).catch(...)` block after each SignalEvent is
+  1189→  1189→  created. Notifies on WARN+CRITICAL only (skips INFO BREAKOUT).
+  1190→  1190→- `src/components/terminal/sources-view.tsx` — +1 new
+  1191→  1191→  `TelegramNotificationsPanel` component (inline `useTelegramConfig`
+  1192→  1192→  query + `useMutation` "Send test" button) rendered below the Data
+  1193→  1193→  Sources panel in the left column.
+  1194→  1194→- `.env` — appended documented Telegram env block (both empty by
+  1195→  1195→  default).
+  1196→  1196→
+  1197→  1197→Files NOT touched (per ownership rules):
+  1198→  1198→- `src/app/page.tsx`, `src/components/providers.tsx`,
+  1199→  1199→  `src/app/layout.tsx`, `src/middleware.ts`, `next.config.ts`,
+  1200→  1200→  `prisma/schema.prisma`, `src/components/terminal/quote-table.tsx`,
+  1201→  1201→  `src/components/terminal/status-bar.tsx`, `src/hooks/use-live-prices.ts`,
+  1202→  1202→  `src/lib/api-client.ts`, and all other `/api/v1/*` handlers EXCEPT
+  1203→  1203→  the two hook-ins (alerts/evaluate, signals/scan) and the new
+  1204→  1204→  notifications route.
+  1205→  1205→
+  1206→  1206→Key decisions:
+  1207→  1207→- The bot is constructed lazily via `require("node-telegram-bot-api")`
+  1208→  1208→  inside `getBot()` on the first send attempt. This keeps the module
+  1209→  1209→  load cheap when notifications are unused and avoids bundling the lib
+  1210→  1210→  into client builds (the route handlers run server-side only).
+  1211→  1211→- `polling:false` is passed to the `TelegramBot` constructor — we only
+  1212→  1212→  call `sendMessage`; never start long polling.
+  1213→  1213→- All `send*` / `notify*` functions are async but never throw — the
+  1214→  1214→  internal try/catch logs `[telegram] sendMessage failed: <msg>` and
+  1215→  1215→  returns. Callers in the signal engines use
+  1216→  1216→  `void notifyX(...).catch(...)` defensively, though the function
+  1217→  1217→  already swallows.
+  1218→  1218→- HTML parse mode is used (Telegram's default). All user-controlled
+  1219→  1219→  text (symbol, message, severity, etc.) is escaped via the small
+  1220→  1220→  `escapeHtml()` helper. Numbers are formatted via `.toFixed(4)`.
+  1221→  1221→- The notifications endpoint relies entirely on the global middleware
+  1222→  1222→  for auth/CSRF/rate-limit — no body change. Verified: GET/POST without
+  1223→  1223→  a session cookie → 401 Unauthorized.
+  1224→  1224→- The `POST {test:true}` endpoint accepts an empty body too (defaults
+  1225→  1225→  to test mode if `test` is omitted) — graceful against curl mistakes.
+  1226→  1226→  When `test` is explicitly `false` or another value → 400 with a
+  1227→  1227→  helpful error.
+  1228→  1228→- The UI hook (`useTelegramConfig`) is kept inline in sources-view.tsx
+  1229→  1229→  per spec ("to avoid editing api-client.ts (other agents may touch
+  1230→  1230→  it), put the hook inline in sources-view.tsx"). It uses a fresh
+  1231→  1231→  fetch (not the shared `getJSON` helper from api-client.ts) so it
+  1232→  1232→  can be moved later without breaking other views.
+  1233→  1233→- The "Send test" button uses shadcn `Button` (outline, sm) + sonner
+  1234→  1234→  toast for feedback, matching the pattern used by the watchlist /
+  1235→  1235→  portfolio / risk views.
+  1236→  1236→- The Notifications panel renders BELOW the Data Sources panel in the
+  1237→  1237→  left column (per spec). It does NOT replace the Request Log panel
+  1238→  1238→  in the right column.
+  1239→  1239→
+  1240→  1240→Verification (curl, dev server on :3000):
+  1241→  1241→- `bun run lint` → exit 0, 0 errors, 0 warnings. ✓
+  1242→  1242→- Main app `GET /` → HTTP 200. ✓
+  1243→  1243→- Authenticated `GET /api/v1/notifications/telegram` →
+  1244→  1244→  `{"ok":true,"data":{"configured":false,"chatId":null,"botTokenSet":false}}` ✓
+  1245→  1245→  (env empty by default → configured:false, exactly as required).
+  1246→  1246→- Authenticated `POST /api/v1/notifications/telegram` body `{"test":true}`
+  1247→  1247→  → `{"ok":false,"error":"Telegram not configured"}` HTTP 400 ✓.
+  1248→  1248→- Unauthenticated GET/POST → `{"ok":false,"error":"Unauthorized"}` HTTP
+  1249→  1249→  401 ✓ (middleware auth enforced).
+  1250→  1250→- Authenticated `POST /api/v1/signals/scan` → HTTP 200
+  1251→  1251→  (`scanned:19, detected:[], skipped:[Yahoo 429s…]`). The notifySignal
+  1252→  1252→  hook is in place but a no-op because Telegram is unconfigured — no
+  1253→  1253→  errors logged. Data path is unaffected. ✓
+  1254→  1254→- Authenticated `POST /api/v1/alerts/evaluate` → HTTP 200
+  1255→  1255→  (`evaluated:1, triggered:[], skipped:[EUR/USD HTTP 429]`). The
+  1256→  1256→  notifyAlertTriggered hook is in place but a no-op. Data path
+  1257→  1257→  unaffected. ✓
+  1258→  1258→- dev.log shows:
+  1259→  1259→  • `GET /api/v1/notifications/telegram 200 in 465ms` (cold compile)
+  1260→  1260→  • `POST /api/v1/notifications/telegram 400 in 15ms`
+  1261→  1261→  • `POST /api/v1/signals/scan 200 in 1476ms`
+  1262→  1262→  • `POST /api/v1/alerts/evaluate 200 in 171ms`
+  1263→  1263→  No compile errors, no runtime errors.
+  1264→  1264→
+  1265→  1265→How the user enables Telegram:
+  1266→  1266→1. DM `@BotFather` on Telegram → `/newbot` → choose a name → copy the
+  1267→  1267→   bot token (format `123456789:ABCdefGhiJklMno…`).
+  1268→  1268→2. Create a private chat with the new bot, or add it as an admin to a
+  1269→  1269→   channel/group. (The bot must be able to post messages.)
+  1270→  1270→3. Get the chat ID:
+  1271→  1271→   - For a private chat: DM `@userinfobot` → it replies with your
+  1272→  1272→     numeric chat ID (e.g. `123456789`).
+  1273→  1273→   - For a channel/group: use the public username (e.g.
+  1274→  1274→     `@mychannel`) OR invite `@userinfobot` to read the chat ID.
+  1275→  1275→4. Edit `.env`:
+  1276→  1276→   ```
+  1277→  1277→   TELEGRAM_BOT_TOKEN=123456789:ABCdefGhiJklMno…
+  1278→  1278→   TELEGRAM_CHAT_ID=123456789
+  1279→  1279→   ```
+  1280→  1280→5. Restart the app (`bun run dev`).
+  1281→  1281→6. Open the terminal → Data Sources module → Notifications panel now
+  1282→  1282→   shows "Configured" with the chat ID. Click "Send test" — a
+  1283→  1283→   `🧪 MERIDIAN Terminal — test notification` message should arrive
+  1284→  1284→   in Telegram. The toast confirms success.
+  1285→  1285→7. From now on, every WARN/CRITICAL signal detected by
+  1286→  1286→   `/api/v1/signals/scan` (RSI_OB, RSI_OS, VOLUME_SPIKE, ANOMALY) and
+  1287→  1287→   every ALERT_TRIGGER fired by `/api/v1/alerts/evaluate` will push an
+  1288→  1288→   HTML-formatted message to the chat. INFO signals (BREAKOUT) are not
+  1289→  1289→   pushed — filter them in Telegram by muting INFO keywords if desired.
+  1290→  1290→
+  1291→  1291→Lint: clean (`bun run lint` exits 0).
+  1292→  1292→
+  1293→  1293→Main app: `curl -sI http://localhost:3000/` → `HTTP/1.1 200 OK` ✓
+  1294→  1294→
+  1295→  1295→Telegram config endpoint (authenticated):
+  1296→  1296→`curl -s -b cookies.txt http://localhost:3000/api/v1/notifications/telegram`
+  1297→  1297→→ `{"ok":true,"data":{"configured":false,"chatId":null,"botTokenSet":false}}` ✓
+  1298→  1298→

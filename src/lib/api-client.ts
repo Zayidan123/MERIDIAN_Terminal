@@ -459,3 +459,261 @@ export function useSignalPoller(active: boolean) {
     };
   }, [active, tick]);
 }
+
+// ─── Fase 4 — Execution Bot (PRD §8.5, §16.7) ────────────────────────────
+// The execution bot runs as a SEPARATE bun process on port 3002 (process
+// isolation per §16.7). Frontend reaches it via the Caddy gateway: every
+// fetch URL includes `?XTransformPort=3002` and uses a RELATIVE path so
+// Caddy routes to the right backend. We DO NOT call localhost:3002
+// directly (per system rules — no absolute URLs / direct port refs in
+// the browser). The bot's HTTP API is documented in
+// `mini-services/execution-bot/index.ts`.
+
+/// Append `XTransformPort=3002` to a path, preserving any existing query.
+/// `path` is a relative path like `/status` or `/order?foo=bar`.
+function botUrl(path: string): string {
+  const sep = path.includes("?") ? "&" : "?";
+  return `${path}${sep}XTransformPort=3002`;
+}
+
+/// Typed response shapes returned by the mini-service.
+export interface BotStatus {
+  ok: boolean;
+  mode: "PAPER" | "LIVE";
+  killSwitch: boolean;
+  autoKillDd: number;
+  maxOrderUsd: number;
+  maxDailyUsd: number;
+  dailyNotionalUsd: number;
+  orderCount24h: number;
+  mt5LiveDeferred: boolean;
+  liveSupported: string[];
+  exchangeName: string | null;
+  exchangeKeysConfigured: boolean;
+  updatedAt: string;
+}
+
+export interface BotOrder {
+  id: string;
+  instrumentId: string;
+  side: "BUY" | "SELL";
+  type: "MARKET" | "LIMIT";
+  size: number;
+  price: number | null;
+  avgFillPrice: number | null;
+  status: "PENDING" | "FILLED" | "PARTIAL" | "CANCELLED" | "REJECTED";
+  mode: "PAPER" | "LIVE";
+  exchange: string | null;
+  exchangeOrderId: string | null;
+  reason: string | null;
+  valueUsd: number;
+  createdAt: string;
+  updatedAt: string;
+  executedAt: string | null;
+  // joined from Instrument
+  instrumentTicker: string | null;
+  instrumentSymbol: string | null;
+  instrumentAssetClass: string | null;
+  instrumentCurrency: string | null;
+}
+
+export interface BotAuditEntry {
+  id: string;
+  action: string;
+  message: string;
+  contextJson: string | null;
+  severity: "INFO" | "WARN" | "CRITICAL";
+  prevHash: string;
+  hash: string;
+  createdAt: string;
+}
+
+export interface BotAuditResponse {
+  ok: boolean;
+  audit: BotAuditEntry[];
+  chainIntact: boolean;
+  firstBrokenId: string | null;
+  count: number;
+  chainLength: number;
+}
+
+export interface BotConfigUpdate {
+  mode?: "PAPER" | "LIVE";
+  killSwitch?: boolean;
+  autoKillDd?: number;
+  maxOrderUsd?: number;
+  maxDailyUsd?: number;
+}
+
+export interface BotConfigResponse {
+  ok: boolean;
+  mode: "PAPER" | "LIVE";
+  killSwitch: boolean;
+  autoKillDd: number;
+  maxOrderUsd: number;
+  maxDailyUsd: number;
+  updatedAt: string;
+}
+
+export interface PlaceOrderInput {
+  instrumentId: string;
+  side: "BUY" | "SELL";
+  type: "MARKET" | "LIMIT";
+  size: number;
+  price?: number;
+  mode?: "PAPER" | "LIVE";
+  confirm?: boolean;
+}
+
+export interface PlaceOrderResponse {
+  ok: boolean;
+  order?: BotOrder;
+  // 409 large-order confirm response
+  needsConfirm?: boolean;
+  message?: string;
+  valueUsd?: number;
+  cap?: number;
+  error?: string;
+}
+
+/// `fetch` wrapper for the bot that injects the gateway port + JSON
+/// headers, parses errors uniformly, and surfaces the raw Response for
+/// status-code handling (e.g. 409 needsConfirm).
+async function botFetch<T>(
+  path: string,
+  opts: { method?: "GET" | "POST"; body?: unknown } = {}
+): Promise<{ status: number; data: T | null; error: string | null }> {
+  const url = botUrl(path);
+  const init: RequestInit = {
+    method: opts.method ?? "GET",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+  };
+  if (opts.body !== undefined) init.body = JSON.stringify(opts.body);
+  let res: Response;
+  try {
+    res = await fetch(url, init);
+  } catch (e) {
+    return {
+      status: 0,
+      data: null,
+      error: e instanceof Error ? e.message : String(e),
+    };
+  }
+  const text = await res.text();
+  let data: T | null = null;
+  if (text) {
+    try {
+      data = JSON.parse(text) as T;
+    } catch {
+      /* leave data null */
+    }
+  }
+  if (!res.ok) {
+    const errMsg =
+      (data && typeof data === "object" && "error" in data && typeof (data as { error?: unknown }).error === "string"
+        ? (data as { error: string }).error
+        : null) ?? `HTTP ${res.status}`;
+    return { status: res.status, data, error: errMsg };
+  }
+  return { status: res.status, data, error: null };
+}
+
+export function useBotStatus() {
+  return useQuery<BotStatus>({
+    queryKey: ["bot-status"],
+    queryFn: async () => {
+      const r = await botFetch<BotStatus>("/status");
+      if (!r.data) throw new Error(r.error ?? "Failed to load bot status");
+      return r.data;
+    },
+    staleTime: 5_000,
+    refetchInterval: 10_000,
+    retry: 1,
+  });
+}
+
+export function useBotOrders(limit = 100, mode?: "PAPER" | "LIVE") {
+  const qs = mode ? `?limit=${limit}&mode=${mode}` : `?limit=${limit}`;
+  return useQuery<BotOrder[]>({
+    queryKey: ["bot-orders", limit, mode],
+    queryFn: async () => {
+      const r = await botFetch<{ ok: boolean; orders: BotOrder[] }>(`/orders${qs}`);
+      if (!r.data) throw new Error(r.error ?? "Failed to load orders");
+      return r.data.orders;
+    },
+    staleTime: 5_000,
+    refetchInterval: 10_000,
+    retry: 1,
+  });
+}
+
+export function useBotAudit(limit = 200) {
+  return useQuery<BotAuditResponse>({
+    queryKey: ["bot-audit", limit],
+    queryFn: async () => {
+      const r = await botFetch<BotAuditResponse>(`/audit?limit=${limit}`);
+      if (!r.data) throw new Error(r.error ?? "Failed to load audit log");
+      return r.data;
+    },
+    staleTime: 5_000,
+    refetchInterval: 15_000,
+    retry: 1,
+  });
+}
+
+export function useUpdateBotConfig() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: BotConfigUpdate): Promise<BotConfigResponse> => {
+      const r = await botFetch<BotConfigResponse>("/config", { method: "POST", body: input });
+      if (!r.data) throw new Error(r.error ?? "Failed to update bot config");
+      return r.data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["bot-status"] });
+      qc.invalidateQueries({ queryKey: ["bot-audit"] });
+    },
+  });
+}
+
+export function usePlaceOrder() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: PlaceOrderInput): Promise<PlaceOrderResponse> => {
+      const r = await botFetch<PlaceOrderResponse>("/order", { method: "POST", body: input });
+      // 409 with needsConfirm is a *successful* protocol outcome — we want
+      // the caller to see the needsConfirm payload, not throw. So only
+      // throw on hard errors (network/5xx). 4xx with a parsed body are
+      // returned as data so the UI can react.
+      if (r.status === 0) throw new Error(r.error ?? "Network error");
+      if (!r.data) throw new Error(r.error ?? `HTTP ${r.status}`);
+      // Surface needsConfirm + cap-breach errors via the returned data
+      // (caller handles 409/400). Throw on 5xx so React Query sees a fail.
+      if (r.status >= 500) throw new Error(r.error ?? `HTTP ${r.status}`);
+      return { ...r.data, error: r.error ?? undefined };
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["bot-status"] });
+      qc.invalidateQueries({ queryKey: ["bot-orders"] });
+      qc.invalidateQueries({ queryKey: ["bot-audit"] });
+    },
+  });
+}
+
+export function useCancelOrder() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (orderId: string): Promise<BotOrder> => {
+      const r = await botFetch<{ ok: boolean; order: BotOrder }>(`/order/${encodeURIComponent(orderId)}/cancel`, {
+        method: "POST",
+      });
+      if (!r.data) throw new Error(r.error ?? "Failed to cancel order");
+      return r.data.order;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["bot-status"] });
+      qc.invalidateQueries({ queryKey: ["bot-orders"] });
+      qc.invalidateQueries({ queryKey: ["bot-audit"] });
+    },
+  });
+}

@@ -351,11 +351,13 @@ export function SignalsView() {
                             "text-[9px] uppercase tracking-wider px-1 py-0.5 rounded",
                             s.signalType === "ANOMALY"
                               ? "bg-[#c7484b]/15 text-[#c7484b]"
-                              : s.signalType === "VOLUME_SPIKE"
-                                ? "bg-[#d4a02a]/15 text-[#d4a02a]"
-                                : s.signalType === "BREAKOUT"
-                                  ? "bg-[#3b5fe0]/15 text-[#3b5fe0]"
-                                  : "bg-[#1b2029] text-[#8891a0]"
+                              : s.signalType === "DRAWDOWN_BREACH"
+                                ? "bg-[#c7484b]/25 text-[#c7484b]"
+                                : s.signalType === "VOLUME_SPIKE"
+                                  ? "bg-[#d4a02a]/15 text-[#d4a02a]"
+                                  : s.signalType === "BREAKOUT"
+                                    ? "bg-[#3b5fe0]/15 text-[#3b5fe0]"
+                                    : "bg-[#1b2029] text-[#8891a0]"
                           )}
                         >
                           {s.signalType}

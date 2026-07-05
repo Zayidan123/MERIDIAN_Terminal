@@ -346,6 +346,77 @@ export async function GET() {
       maxDrawdown = dd.maxDrawdown;
     }
 
+    // ── 8b. Drawdown alert trigger (PRD FR-3.4) ────────────────────────
+    // When current drawdown breaches a severity threshold, emit a SignalEvent
+    // (deduped per severity within a 1h window) so it flows into the Signals
+    // feed + Telegram. Thresholds: WARN at -10%, CRITICAL at -20%.
+    if (currentDrawdown !== null) {
+      const severity =
+        currentDrawdown <= -20
+          ? "CRITICAL"
+          : currentDrawdown <= -10
+            ? "WARN"
+            : null;
+      if (severity) {
+        const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+        try {
+          const existing = await db.signalEvent.findFirst({
+            where: {
+              signalType: "DRAWDOWN_BREACH",
+              severity,
+              createdAt: { gt: oneHourAgo },
+            },
+          });
+          if (!existing) {
+            // Use the first position's instrument as the anchor for the event
+            // (drawdown is portfolio-level, not instrument-level). If there
+            // are no positions this block is unreachable.
+            const anchor = enriched[0];
+            const ddPctStr = currentDrawdown.toFixed(2);
+            const maxDdStr = maxDrawdown !== null ? maxDrawdown.toFixed(2) : "n/a";
+            await db.signalEvent.create({
+              data: {
+                instrumentId: anchor.instrument.id,
+                signalType: "DRAWDOWN_BREACH",
+                severity,
+                message: `Portfolio drawdown ${ddPctStr}% breached ${severity === "CRITICAL" ? "critical (-20%)" : "warning (-10%)"} threshold · max DD ${maxDdStr}%`,
+                contextJson: JSON.stringify({
+                  currentDrawdown,
+                  maxDrawdown,
+                  thresholds: { WARN: -10, CRITICAL: -20 },
+                  totalEquity,
+                  totalExposure,
+                  positionCount: enriched.length,
+                  portfolioLevel: true,
+                }),
+                priceAtEvent:
+                  anchor.marketValue !== null && anchor.row.size > 0
+                    ? anchor.marketValue / anchor.row.size
+                    : null,
+              },
+            });
+            // Fire-and-forget Telegram notification (best-effort, never throws).
+            import("@/lib/notifications/telegram")
+              .then((m) =>
+                m.notifySignal({
+                  instrumentSymbol: "PORTFOLIO",
+                  assetClass: "MULTI",
+                  signalType: "DRAWDOWN_BREACH",
+                  severity,
+                  message: `Portfolio drawdown ${ddPctStr}% breached ${severity === "CRITICAL" ? "critical (-20%)" : "warning (-10%)"} threshold · max DD ${maxDdStr}%`,
+                  priceAtEvent: undefined,
+                })
+              )
+              .catch(() => {
+                /* notifications must never break the risk path */
+              });
+          }
+        } catch (e) {
+          console.error("[risk.summary] drawdown alert failed", e);
+        }
+      }
+    }
+
     // ── 9. Correlation matrix (pairwise, aligned by time) ──────────────
     const correlationCells: CorrelationCell[] = [];
     for (let i = 0; i < withReturns.length; i++) {
