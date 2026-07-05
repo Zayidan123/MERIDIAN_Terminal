@@ -1,0 +1,151 @@
+// MERIDIAN Terminal — Prisma schema (PRD §14)
+// SQLite for local-first dev. All market data is fetched live from real
+// sources (Binance, Yahoo Finance, etc.) — NO simulated/dummy data is ever
+// persisted as if it were market data.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+/// Master list of tradeable instruments across asset classes.
+model Instrument {
+  id         String   @id @default(cuid())
+  assetClass String   // "CRYPTO" | "EQUITY" | "FOREX" | "COMMODITY"
+  ticker     String   @unique // e.g. "BTCUSDT", "BBCA.JK", "EURUSD=X", "GC=F"
+  symbol     String   // display symbol e.g. "BTC/USDT", "BBCA", "EUR/USD", "XAU/USD"
+  name       String   // human readable name
+  exchange   String?  // e.g. "BINANCE", "IDX", "CCY", "COMEX"
+  currency   String   // quote currency e.g. "USDT","IDR","USD"
+  source     String   // primary data source key e.g. "binance","yahoo"
+  lotSize    Float?   // contract / lot size hint
+  metadata   String?  // JSON string of extra info
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  watchlistItems     WatchlistItem[]
+  alerts             Alert[]
+  positions          Position[]
+  signalEvents       SignalEvent[]
+  fundamentals       Fundamental[]
+}
+
+/// Cached fundamental snapshot for an instrument (equities primarily).
+model Fundamental {
+  id        String   @id @default(cuid())
+  ticker    String   @unique
+  period    String?  // e.g. "FY2024" or "2024-Q4"
+  revenue   Float?
+  netIncome Float?
+  eps       Float?
+  roe       Float?   // %
+  per       Float?
+  pbv       Float?
+  graham    Float?   // Graham number
+  dcfFair   Float?   // simple DCF fair value
+  source    String
+  fetchedAt DateTime @default(now())
+
+  instrument Instrument @relation(fields: [ticker], references: [ticker])
+}
+
+/// A watchlist groups instruments the user is actively monitoring.
+model Watchlist {
+  id        String   @id @default(cuid())
+  name      String   @default("Default")
+  createdAt DateTime @default(now())
+
+  items WatchlistItem[]
+}
+
+model WatchlistItem {
+  id           String   @id @default(cuid())
+  watchlistId  String
+  instrumentId String
+  addedAt      DateTime @default(now())
+
+  watchlist  Watchlist  @relation(fields: [watchlistId], references: [id], onDelete: Cascade)
+  instrument Instrument @relation(fields: [instrumentId], references: [id], onDelete: Cascade)
+
+  @@unique([watchlistId, instrumentId])
+}
+
+/// User-defined alert conditions (PRD FR-2.1).
+model Alert {
+  id           String    @id @default(cuid())
+  instrumentId String
+  metric       String    // "price" | "pct_change_24h" | "volume_spike" | "rsi" | "price_above_ma"
+  operator     String    // "gt" | "lt" | "cross_up" | "cross_down"
+  threshold    Float
+  status       String    @default("ACTIVE") // "ACTIVE" | "TRIGGERED" | "PAUSED" | "DELETED"
+  note         String?
+  createdAt    DateTime  @default(now())
+  triggeredAt  DateTime?
+  updatedAt    DateTime  @updatedAt
+
+  instrument Instrument @relation(fields: [instrumentId], references: [id], onDelete: Cascade)
+
+  @@index([status])
+}
+
+/// A signal/anomaly event detected by the engine (PRD FR-2.2, FR-2.4).
+model SignalEvent {
+  id           String   @id @default(cuid())
+  instrumentId String
+  signalType   String   // "VOLUME_SPIKE" | "BREAKOUT" | "RSI_OB" | "RSI_OS" | "ALERT_TRIGGER" | "ANOMALY"
+  severity     String   @default("INFO") // "INFO" | "WARN" | "CRITICAL"
+  message      String
+  contextJson  String   // JSON: the data that triggered it
+  priceAtEvent Float?
+  createdAt    DateTime @default(now())
+
+  instrument Instrument @relation(fields: [instrumentId], references: [id], onDelete: Cascade)
+
+  @@index([createdAt])
+  @@index([signalType])
+}
+
+/// A manually entered portfolio position (PRD FR-3.1).
+model Position {
+  id           String   @id @default(cuid())
+  instrumentId String
+  side         String   @default("LONG") // "LONG" | "SHORT"
+  entryPrice   Float
+  size         Float    // quantity
+  openedAt     DateTime @default(now())
+  note         String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  instrument Instrument @relation(fields: [instrumentId], references: [id], onDelete: Cascade)
+}
+
+/// Periodic risk snapshot for the portfolio (PRD §14 risk_snapshots).
+model RiskSnapshot {
+  id              String   @id @default(cuid())
+  totalEquity     Float
+  totalExposure   Float
+  exposurePct     Float
+  varEstimate     Float?   // value at risk
+  maxDrawdown     Float?
+  currentDrawdown Float?
+  createdAt       DateTime @default(now())
+}
+
+/// Provenance / health log for every external data request (PRD FR-0.5).
+model DataSourceHealthLog {
+  id           String   @id @default(cuid())
+  source       String   // "binance" | "yahoo" | "coingecko"
+  endpoint     String   // short label of endpoint
+  status       String   // "OK" | "FAIL" | "RATE_LIMITED" | "TIMEOUT"
+  latencyMs    Int?
+  errorMessage String?
+  createdAt    DateTime @default(now())
+
+  @@index([source, createdAt])
+  @@index([status])
+}

@@ -1,0 +1,171 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-inter);
+  --font-heading: var(--font-plex-sans);
+  --font-mono: var(--font-jetbrains-mono);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-gain: var(--gain);
+  --color-loss: var(--loss);
+  --color-brand: var(--brand);
+  --color-surface: var(--surface);
+  --color-panel: var(--panel);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+/*
+  MERIDIAN Terminal — institutional dark theme by default.
+  Palette per PRD §13.
+*/
+:root,
+.dark {
+  --radius: 0.25rem;
+
+  /* Surfaces */
+  --background: #0b0e13;          /* charcoal near-black */
+  --surface: #0b0e13;
+  --panel: #151920;               /* surface/panel */
+  --card: #151920;
+  --card-foreground: #e7e9ec;
+  --popover: #151920;
+  --popover-foreground: #e7e9ec;
+
+  /* Text */
+  --foreground: #e7e9ec;          /* primary text */
+  --muted: #1b2029;
+  --muted-foreground: #8891a0;    /* secondary/muted text */
+
+  /* Brand + semantics */
+  --primary: #3b5fe0;             /* cobalt deep blue */
+  --primary-foreground: #ffffff;
+  --secondary: #1b2029;
+  --secondary-foreground: #e7e9ec;
+  --accent: #1b2029;
+  --accent-foreground: #e7e9ec;
+  --destructive: #c7484b;         /* desaturated brick red */
+  --gain: #2e9e6d;                /* desaturated teal green */
+  --loss: #c7484b;
+  --brand: #3b5fe0;
+
+  /* Lines */
+  --border: #262b33;              /* divider */
+  --input: #262b33;
+  --ring: #3b5fe0;
+
+  /* Charts */
+  --chart-1: #3b5fe0;
+  --chart-2: #2e9e6d;
+  --chart-3: #c7484b;
+  --chart-4: #d4a02a;
+  --chart-5: #8891a0;
+
+  /* Sidebar / nav rail */
+  --sidebar: #0b0e13;
+  --sidebar-foreground: #e7e9ec;
+  --sidebar-primary: #3b5fe0;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #151920;
+  --sidebar-accent-foreground: #e7e9ec;
+  --sidebar-border: #262b33;
+  --sidebar-ring: #3b5fe0;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html,
+  body {
+    height: 100%;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "tnum" 1, "cv01" 1;
+    -webkit-font-smoothing: antialiased;
+  }
+  /* Monospace numerics everywhere numbers appear in tables/data */
+  .tabular {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+  }
+}
+
+/* Custom scrollbar — slim, institutional */
+@layer base {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #2a3038 transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  *::-webkit-scrollbar-thumb {
+    background-color: #2a3038;
+    border-radius: 4px;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background-color: #3a414b;
+  }
+}
+
+/* Subtle pulse for live indicators */
+@keyframes meridian-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+.animate-live-pulse {
+  animation: meridian-pulse 1.8s ease-in-out infinite;
+}
+
+/* Flash animation for price ticks */
+@keyframes meridian-flash-up {
+  0% { background-color: rgba(46, 158, 109, 0.22); }
+  100% { background-color: transparent; }
+}
+@keyframes meridian-flash-down {
+  0% { background-color: rgba(199, 72, 75, 0.22); }
+  100% { background-color: transparent; }
+}
+.flash-up { animation: meridian-flash-up 0.7s ease-out; }
+.flash-down { animation: meridian-flash-down 0.7s ease-out; }
