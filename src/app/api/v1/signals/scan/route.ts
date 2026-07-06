@@ -183,6 +183,10 @@ function detect(instrument: Instrument, candles: Candle[]): Detection[] {
 
 export async function POST() {
   try {
+    // Read the "notify INFO signals" user preference (default: false).
+    const notifyInfoRow = await db.setting.findUnique({ where: { key: "telegram_notify_info" } });
+    const notifyInfo = notifyInfoRow?.value === "true";
+
     const wl = await db.watchlist.findFirst({
       where: { name: "Default" },
       include: { items: { include: { instrument: true } } },
@@ -273,10 +277,15 @@ export async function POST() {
             signalEventId: created.id,
           });
 
-          // PRD FR-2.3 — fire-and-forget Telegram notification. WARN/CRITICAL
-          // only (VOLUME_SPIKE/BREAKOUT are INFO; user can filter in Telegram).
-          // Never awaited, never throws (notifications must not break the path).
-          if (d.severity === "WARN" || d.severity === "CRITICAL") {
+          // PRD FR-2.3 — fire-and-forget Telegram notification.
+          // Default: WARN/CRITICAL only. When user enables "notify INFO"
+          // (setting telegram_notify_info=true), INFO signals (BREAKOUT) are
+          // also sent. Never awaited, never throws.
+          const shouldNotify =
+            d.severity === "WARN" ||
+            d.severity === "CRITICAL" ||
+            (notifyInfo && d.severity === "INFO");
+          if (shouldNotify) {
             void notifySignal({
               instrumentSymbol: instrument.symbol,
               assetClass: instrument.assetClass,

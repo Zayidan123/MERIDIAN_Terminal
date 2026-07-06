@@ -9,6 +9,7 @@ import { SignalsView } from "@/components/terminal/signals-view";
 import { RiskView } from "@/components/terminal/risk-view";
 import { PortfolioView } from "@/components/terminal/portfolio-view";
 import { ExecutionView } from "@/components/terminal/execution-view";
+import { BacktestView } from "@/components/terminal/backtest-view";
 import { SourcesView } from "@/components/terminal/sources-view";
 import { useTerminal, type ModuleKey } from "@/lib/store";
 import { useSeed, useSignalPoller } from "@/lib/api-client";
@@ -22,7 +23,8 @@ const TITLES: Record<ModuleKey, { title: string; sub: string }> = {
   risk: { title: "Risk Management", sub: "Exposure · VaR · drawdown · correlation" },
   portfolio: { title: "Portfolio", sub: "Positions & mark-to-market" },
   execution: { title: "Execution Bot", sub: "Paper & live order execution · PRD Fase 4" },
-  sources: { title: "Data Sources", sub: "Provenance & health monitoring" },
+  backtest: { title: "Backtesting", sub: "Strategy testing on real historical data · PRD §6" },
+  sources: { title: "Data Sources & Settings", sub: "Provenance · health · security · notifications" },
 };
 
 export function AppShell() {
@@ -73,6 +75,7 @@ export function AppShell() {
             {active === "risk" && <RiskView />}
             {active === "portfolio" && <PortfolioView />}
             {active === "execution" && <ExecutionView />}
+            {active === "backtest" && <BacktestView />}
             {active === "sources" && <SourcesView />}
           </div>
 

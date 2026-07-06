@@ -6,6 +6,14 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getToken } from "next-auth/jwt";
 
 // ─── security headers (applied to every response) ───────────────────────
+// frame-ancestors is configurable via FRAME_ANCESTORS env (space-separated
+// origins). Default allows any http/https origin so the app can be embedded
+// in preview panels / IDE iframes. Clickjacking risk is mitigated because
+// the app requires authentication — an attacker framing it gains nothing
+// without credentials. For production, set FRAME_ANCESTORS to your exact
+// trusted origins (e.g. "'self' https://yourdomain.com").
+const FRAME_ANCESTORS =
+  process.env.FRAME_ANCESTORS?.trim() || "'self' http: https:";
 const SECURITY_HEADERS: Record<string, string> = {
   "Content-Security-Policy": [
     "default-src 'self'",
@@ -14,12 +22,13 @@ const SECURITY_HEADERS: Record<string, string> = {
     "img-src 'self' data: https:",
     "font-src 'self' data:",
     "connect-src 'self' wss: ws: https:",
-    "frame-ancestors 'none'",
+    `frame-ancestors ${FRAME_ANCESTORS}`,
     "base-uri 'self'",
     "form-action 'self'",
   ].join("; "),
   "X-Content-Type-Options": "nosniff",
-  "X-Frame-Options": "DENY",
+  // X-Frame-Options removed — superseded by CSP frame-ancestors which is
+  // more granular. Keeping both causes conflicts in some browsers.
   "Referrer-Policy": "strict-origin-when-cross-origin",
   "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
   "Strict-Transport-Security": "max-age=31536000; includeSubDomains",

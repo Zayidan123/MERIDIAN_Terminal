@@ -3,11 +3,15 @@
 import { Panel, EmptyState, LoadingState } from "@/components/panel";
 import { useHealth } from "@/lib/api-client";
 import { fmtTimeAgo, SOURCE_LABELS } from "@/lib/format";
-import { Database, CheckCircle2, XCircle, AlertTriangle, Clock, Activity, Send, MessageSquare, Loader2 } from "lucide-react";
+import { Database, CheckCircle2, XCircle, AlertTriangle, Clock, Activity, Send, MessageSquare, Loader2, ShieldCheck, KeyRound, Copy } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { useState } from "react";
 
 const STATUS_META: Record<string, { icon: typeof CheckCircle2; color: string; bg: string; label: string }> = {
   OK: { icon: CheckCircle2, color: "#2e9e6d", bg: "rgba(46,158,109,0.12)", label: "Operational" },
@@ -296,6 +300,12 @@ export function SourcesView() {
 
         {/* Telegram notifications config (PRD FR-2.3) */}
         <TelegramNotificationsPanel />
+
+        {/* 2FA / TOTP setup (PRD §16.3) */}
+        <SecurityPanel />
+
+        {/* Notification preferences */}
+        <NotificationPreferencesPanel />
       </div>
 
       {/* Recent request log */}
@@ -356,5 +366,199 @@ export function SourcesView() {
         </Panel>
       </div>
     </div>
+  );
+}
+
+// ─── 2FA / TOTP Security Panel (PRD §16.3) ───────────────────────────────
+function SecurityPanel() {
+  const [token, setToken] = useState("");
+  const [verified, setVerified] = useState(false);
+
+  const setup = useQuery<{ enabled: boolean; secret?: string; otpauthUrl?: string; qrDataUrl?: string }>({
+    queryKey: ["totp-setup"],
+    queryFn: async () => {
+      const res = await fetch("/api/auth/totp-setup");
+      const j = await res.json();
+      if (!j.ok) throw new Error(j.error ?? "Failed");
+      return j.data;
+    },
+    staleTime: 0,
+  });
+
+  const verifyMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/auth/totp-verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token, secret: setup.data?.secret }),
+      });
+      const j = await res.json();
+      if (!j.ok) throw new Error(j.error ?? "Failed");
+      return j.data as { verified: boolean };
+    },
+    onSuccess: (r) => {
+      if (r.verified) {
+        setVerified(true);
+        toast.success("TOTP verified! Now add the secret to .env (see instructions below).");
+      } else {
+        toast.error("Invalid code. Check your authenticator app time sync.");
+      }
+    },
+    onError: (e) => toast.error("Verify failed: " + String(e)),
+  });
+
+  const d = setup.data;
+  const totpEnabledInEnv = process.env.NEXT_PUBLIC_TOTP_ENABLED === "1";
+
+  return (
+    <Panel
+      title="Two-Factor Authentication (2FA)"
+      subtitle="TOTP · PRD §16.3"
+      loading={setup.isLoading}
+      actions={<ShieldCheck className={cn("h-3.5 w-3.5", d?.enabled || totpEnabledInEnv ? "text-[#2e9e6d]" : "text-[#8891a0]")} />}
+    >
+      {setup.isLoading ? (
+        <LoadingState rows={3} />
+      ) : d?.enabled ? (
+        <div className="flex items-center gap-2 py-2">
+          <CheckCircle2 className="h-4 w-4 text-[#2e9e6d]" />
+          <span className="text-[11px] text-[#e7e9ec]">2FA is <strong className="text-[#2e9e6d]">enabled</strong>. Login requires your authenticator code.</span>
+        </div>
+      ) : d && !d.enabled ? (
+        <div className="flex flex-col gap-3">
+          <div className="flex items-center gap-2 p-2 border border-[#d4a02a]/40 bg-[#d4a02a]/8 rounded text-[10px] text-[#e7e9ec]">
+            <AlertTriangle className="h-3.5 w-3.5 text-[#d4a02a] shrink-0" />
+            2FA is <strong className="text-[#d4a02a]">not enabled</strong>. Follow the steps below to require a TOTP code on every login.
+          </div>
+
+          {/* QR code */}
+          {d.qrDataUrl && (
+            <div className="flex flex-col items-center gap-2 py-2">
+              <img src={d.qrDataUrl} alt="TOTP QR code" className="rounded border border-[#262b33]" width={200} height={200} />
+              <p className="text-[9px] text-[#4a525c]">Scan with Google Authenticator, Authy, or 1Password</p>
+            </div>
+          )}
+
+          {/* Secret (manual entry) */}
+          <div>
+            <Label className="text-[10px] uppercase tracking-wider text-[#8891a0]">Secret (manual entry if QR doesn't work)</Label>
+            <div className="flex items-center gap-1 mt-1">
+              <Input
+                readOnly
+                value={d.secret ?? ""}
+                className="bg-[#0b0e13] border-[#262b33] text-[11px] tabular h-8 font-mono"
+              />
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-8 px-2 border-[#262b33]"
+                onClick={() => { navigator.clipboard.writeText(d.secret ?? ""); toast.success("Secret copied"); }}
+              >
+                <Copy className="h-3 w-3" />
+              </Button>
+            </div>
+          </div>
+
+          {/* Verify */}
+          <div>
+            <Label className="text-[10px] uppercase tracking-wider text-[#8891a0]">Enter the 6-digit code from your app to verify</Label>
+            <div className="flex items-center gap-1 mt-1">
+              <Input
+                value={token}
+                onChange={(e) => setToken(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                placeholder="000000"
+                className="bg-[#0b0e13] border-[#262b33] text-[11px] tabular h-8 font-mono tracking-widest"
+              />
+              <Button
+                size="sm"
+                className="h-8 text-[10px] uppercase bg-[#3b5fe0] hover:bg-[#2f4ec2]"
+                disabled={token.length !== 6 || verifyMutation.isPending}
+                onClick={() => verifyMutation.mutate()}
+              >
+                {verifyMutation.isPending ? "…" : "Verify"}
+              </Button>
+            </div>
+          </div>
+
+          {/* Instructions after verify */}
+          {verified && (
+            <div className="p-2 border border-[#2e9e6d]/40 bg-[#2e9e6d]/8 rounded text-[10px] text-[#e7e9ec]">
+              <p className="font-medium text-[#2e9e6d] mb-1">✓ Verified! Final step — add to .env & restart:</p>
+              <pre className="text-[9px] tabular bg-[#0b0e13] p-2 rounded overflow-x-auto whitespace-pre-wrap break-all">{`MERIDIAN_TOTP_SECRET=${d.secret}
+NEXT_PUBLIC_TOTP_ENABLED=1`}</pre>
+              <p className="mt-1 text-[#8891a0]">Then restart the app. Login will require the TOTP code.</p>
+            </div>
+          )}
+        </div>
+      ) : (
+        <EmptyState title="Cannot load 2FA status" hint="Ensure you're logged in." icon={<KeyRound className="h-5 w-5" />} />
+      )}
+    </Panel>
+  );
+}
+
+// ─── Notification Preferences (Telegram INFO opt-in) ─────────────────────
+function NotificationPreferencesPanel() {
+  const qc = useQueryClient();
+  const settings = useQuery<Record<string, string>>({
+    queryKey: ["settings"],
+    queryFn: async () => {
+      const res = await fetch("/api/v1/settings");
+      const j = await res.json();
+      if (!j.ok) throw new Error(j.error ?? "Failed");
+      return j.data;
+    },
+    staleTime: 10_000,
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: async ({ key, value }: { key: string; value: string }) => {
+      const res = await fetch("/api/v1/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key, value }),
+      });
+      const j = await res.json();
+      if (!j.ok) throw new Error(j.error ?? "Failed");
+      return j.data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["settings"] });
+    },
+  });
+
+  const notifyInfo = settings.data?.telegram_notify_info === "true";
+
+  return (
+    <Panel
+      title="Notification Preferences"
+      subtitle="Telegram signal filtering"
+      loading={settings.isLoading}
+    >
+      <div className="flex items-center justify-between py-1">
+        <div className="min-w-0 pr-3">
+          <div className="flex items-center gap-1.5">
+            <MessageSquare className="h-3.5 w-3.5 text-[#8891a0]" />
+            <span className="text-[11px] font-medium text-[#e7e9ec]">Notify INFO signals</span>
+          </div>
+          <p className="text-[9px] text-[#4a525c] mt-0.5">
+            When ON, BREAKOUT signals (INFO level) are also sent to Telegram. Default: OFF (only WARN/CRITICAL).
+          </p>
+        </div>
+        <Switch
+          checked={notifyInfo}
+          disabled={updateMutation.isPending}
+          onCheckedChange={(checked) => {
+            updateMutation.mutate(
+              { key: "telegram_notify_info", value: checked ? "true" : "false" },
+              {
+                onSuccess: () => toast.success(checked ? "INFO signals enabled" : "INFO signals disabled (WARN/CRITICAL only)"),
+                onError: (e) => toast.error("Failed: " + String(e)),
+              }
+            );
+          }}
+        />
+      </div>
+    </Panel>
   );
 }

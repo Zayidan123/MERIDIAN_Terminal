@@ -33,6 +33,7 @@ model Instrument {
   signalEvents       SignalEvent[]
   fundamentals       Fundamental[]
   candles            PriceOhlcv[]
+  backtests          Backtest[]
 }
 
 /// Persisted OHLCV candles (PRD §14 `price_ohlcv`).
@@ -236,4 +237,59 @@ model DataSourceHealthLog {
 
   @@index([source, createdAt])
   @@index([status])
+}
+
+/// Backtest run metadata + results (PRD §6 — backtesting with real historical data).
+model Backtest {
+  id           String   @id @default(cuid())
+  instrumentId String
+  strategyType String   // "MA_CROSS" | "RSI_THRESHOLD" | "BREAKOUT" | "BUY_HOLD"
+  paramsJson   String   // JSON: strategy parameters (e.g. {fast:20, slow:50})
+  timeframe    String   // candle timeframe used (e.g. "1d")
+  startTs      BigInt   // backtest period start (epoch ms)
+  endTs        BigInt   // backtest period end (epoch ms)
+  candleCount  Int
+  // Results (computed by the runner):
+  initialCapital Float
+  finalEquity    Float
+  totalReturnPct Float
+  maxDrawdownPct Float
+  winRate        Float   // 0-100
+  tradeCount     Int
+  sharpeRatio    Float?
+  profitFactor   Float?
+  resultsJson  String   // JSON: equity curve points + full metrics
+  createdAt    DateTime @default(now())
+
+  instrument Instrument @relation(fields: [instrumentId], references: [id], onDelete: Cascade)
+  trades     BacktestTrade[]
+
+  @@index([createdAt])
+  @@index([instrumentId])
+}
+
+/// Individual trades from a backtest run.
+model BacktestTrade {
+  id          String  @id @default(cuid())
+  backtestId  String
+  side        String  // "LONG" | "SHORT"
+  entryTime   BigInt
+  exitTime    BigInt
+  entryPrice  Float
+  exitPrice   Float
+  size        Float
+  pnl         Float   // absolute
+  pnlPct      Float   // percent
+  exitReason  String  // "SIGNAL" | "STOP" | "EOD"
+  backtest    Backtest @relation(fields: [backtestId], references: [id], onDelete: Cascade)
+
+  @@index([backtestId])
+}
+
+/// Generic key-value user settings (single-user app).
+/// Used for: telegram notify INFO toggle, default backtest capital, etc.
+model Setting {
+  key       String   @id
+  value     String   // stored as string, parsed by consumer
+  updatedAt DateTime @updatedAt
 }

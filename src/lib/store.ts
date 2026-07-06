@@ -9,6 +9,7 @@ export type ModuleKey =
   | "risk"
   | "portfolio"
   | "execution"
+  | "backtest"
   | "sources";
 
 interface TerminalState {

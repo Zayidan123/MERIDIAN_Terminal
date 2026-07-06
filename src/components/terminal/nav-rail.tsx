@@ -1,6 +1,6 @@
 "use client";
 
-import { LayoutDashboard, ListChecks, Siren, ShieldAlert, Briefcase, Zap, Database, Activity } from "lucide-react";
+import { LayoutDashboard, ListChecks, Siren, ShieldAlert, Briefcase, Zap, FlaskConical, Database, Activity } from "lucide-react";
 import { useTerminal, type ModuleKey } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { useAlerts, useSignals } from "@/lib/api-client";
@@ -12,6 +12,7 @@ const NAV: { key: ModuleKey; label: string; icon: typeof LayoutDashboard }[] = [
   { key: "risk", label: "Risk", icon: ShieldAlert },
   { key: "portfolio", label: "Portfolio", icon: Briefcase },
   { key: "execution", label: "Execution", icon: Zap },
+  { key: "backtest", label: "Backtest", icon: FlaskConical },
   { key: "sources", label: "Data Sources", icon: Database },
 ];
 
