@@ -1,255 +1,259 @@
 # MERIDIAN Terminal
 
-> **Platform riset, sinyal, risk & eksekusi multi-aset** — institutional-grade trading terminal yang menyatukan crypto, saham IDX, forex & gold dalam satu layar. 100% data pasar nyata, tanpa simulasi.
+> **Institutional-grade crypto/Web3 research, signal, risk & execution terminal** — built for global SaaS commercialization. 100% real market data, zero simulation.
 
-![Status](https://img.shields.io/badge/status-v1.0%20(Phase%200%E2%80%934)-3b5fe0)
+![Status](https://img.shields.io/badge/status-pivoting%20to%20crypto%2FWeb3%20SaaS-3b5fe0)
 ![Data](https://img.shields.io/badge/data-100%25%20real%20market-2e9e6d)
-![License](https://img.shields.io/badge/license-MIT-8891a0)
+![Target](https://img.shields.io/badge/target-global%20SaaS%20launch-d4a02a)
+![License](https://img.shields.io/badge/license-commercial-8891a0)
 
 ---
 
 ## Daftar Isi
 
 1. [Tentang Proyek](#tentang-proyek)
-2. [Tujuan Akhir](#tujuan-akhir)
-3. [Fitur yang Sudah Dikerjakan](#fitur-yang-sudah-dikerjakan)
-4. [Yang Belum Dikerjakan](#yang-belum-dikerjakan)
-5. [Yang Akan Dikerjakan Selanjutnya](#yang-akan-dikerjakan-selanjutnya)
+2. [Pengumuman: Pivot Strategis](#pengumuman-pivot-strategis)
+3. [Status Saat Ini (v1.0)](#status-saat-ini-v10)
+4. [Roadmap ke SaaS Komersial](#roadmap-ke-saas-komersial)
+5. [Tujuan Akhir](#tujuan-akhir)
 6. [Arsitektur Sistem](#arsitektur-sistem)
 7. [Tech Stack](#tech-stack)
 8. [Cara Menjalankan](#cara-menjalankan)
 9. [Struktur Proyek](#struktur-proyek)
-10. [Sumber Data](#sumber-data)
-11. [Keamanan](#keamanan)
-12. [Tantangan Selama Development](#tantangan-selama-development)
-13. [Hal Paling Sulit](#hal-paling-sulit)
-14. [Disclaimer](#disclaimer)
+10. [Keamanan](#keamanan)
+11. [Tantangan Selama Development](#tantangan-selama-development)
+12. [Disclaimer](#disclaimer)
 
 ---
 
 ## Tentang Proyek
 
-**MERIDIAN Terminal** adalah platform riset dan trading multi-aset yang menyatukan empat fungsi dalam satu sistem: riset/dashboard, sinyal & alert, manajemen risiko/portofolio, dan eksekusi otomatis (paper + live). Dibangun mengikuti PRD yang mensyaratkan standar tampilan dan keandalan data setara institusi finansial profesional.
+**MERIDIAN Terminal** adalah platform riset dan trading yang menyatukan empat fungsi dalam satu sistem: riset/dashboard, sinyal & alert, manajemen risiko/portofolio, dan eksekusi otomatis (paper + live).
 
-**Prinsip inti yang tidak bisa ditawar:** seluruh data yang ditampilkan harus data pasar nyata — tidak ada data simulasi, dummy, atau placeholder dalam bentuk apa pun, di lingkungan produksi maupun development. Ketika sumber data down atau rate-limited, sistem menampilkan status "Source unavailable" secara eksplisit, bukan angka karangan.
+**Tujuan komersial:** Diluncurkan sebagai **SaaS global** dengan subscription bulanan/tahunan, fokus penuh ke dunia cryptocurrency dan Web3, dengan standar institusional global.
 
-### Mengapa dibangun?
+**Prinsip inti (non-negotiable):** seluruh data yang ditampilkan harus data pasar nyata — tidak ada simulasi, dummy, atau placeholder. Ketika sumber data down/rate-limited, sistem menampilkan "Source unavailable" secara eksplisit.
 
-Trader/investor yang mengelola lebih dari satu kelas aset biasanya harus berpindah antar banyak tool terpisah (exchange app, broker saham, TradingView, spreadsheet risk management manual). Ini memecah fokus dan memperlambat pengambilan keputusan. MERIDIAN menyatukan riset, sinyal, dan manajemen risiko lintas aset dalam satu tempat.
+---
 
-### Untuk siapa?
+## Pengumuman: Pivot Strategis
 
-Single-user (pemilik platform), berperan sebagai trader/investor aktif lintas aset. Use case inti: cek kondisi market pagi hari lintas 3 kelas aset dalam satu layar, terima alert saat kondisi tertentu terpenuhi, evaluasi risiko portofolio sebelum entry baru.
+> **Update terbaru:** Proyek ini sedang dalam transisi dari multi-asset (crypto + IDX + forex + gold) menjadi **crypto/Web3-only** untuk persiapan komersialisasi SaaS global.
+
+### Mengapa pivot?
+
+1. **Fokus pasar global** — crypto/Web3 adalah pasar 24/7 tanpa batas geografis, cocok untuk SaaS global sejak hari 1.
+2. **Stabilitas teknis** — Yahoo Finance (sumber IDX/forex/gold) adalah penyebab utama crash sandbox (ECONNRESET, rate-limit, IP ban). Binance/CoinGecko jauh lebih stabil.
+3. **Sederhanakan compliance** — crypto-only menghindari kompleksitas regulator saham IDX (OJK) dan forex (broker partnerships per region).
+4. **Ekosistem Web3 berkembang pesat** — DefiLlama, on-chain data, multi-exchange via CCXT memberi nilai unik dibanding trading terminal tradisional.
+
+### Apa yang berubah?
+
+| Aspek | Sebelum (v1.0) | Sesudah (v2.0 target) |
+|---|---|---|
+| **Kelas aset** | Crypto + IDX + Forex + Gold | **Crypto-only** (10-15 top exchanges via CCXT) |
+| **Pengguna** | Single-user (env config) | **Multi-tenant** (signup, billing, usage limits) |
+| **Database** | SQLite | **PostgreSQL** (concurrent users) |
+| **Deployment** | Local-only | **VPS + Docker + TLS** (domain publik) |
+| **API keys** | Operator set di .env | **User input via UI** (encrypted di DB) |
+| **Monetisasi** | Tidak ada | **Stripe subscription** (bulan/tahun) |
+| **Web3 layer** | Tidak ada | **DefiLlama TVL + on-chain metrics** |
+| **Target market** | Personal | **Global SaaS** |
+
+### Apa yang tetap?
+
+- ✅ Core engine: data layer, signal engine, risk calculator, backtesting, execution bot
+- ✅ UI/UX institusional (dark palette, density, provenance bars)
+- ✅ Prinsip integritas data 100%
+- ✅ Security foundations (NextAuth, bcrypt, TOTP, CSP, CSRF, audit log)
+- ✅ Tech stack: Next.js 16 + TypeScript + Prisma + CCXT
+
+---
+
+## Status Saat Ini (v1.0)
+
+Build saat ini masih **multi-asset single-user** (sebelum pivot). Ini snapshot jujur:
+
+### ✅ Berfungsi penuh
+
+| Modul | Status | Detail |
+|---|---|---|
+| **Auth** | ✅ | NextAuth + bcrypt + optional 2FA/TOTP, login screen, session management |
+| **Data Layer** | ✅ | Binance (crypto), Yahoo (IDX/forex/gold), CoinGecko (crypto fundamentals), health logging, retry/backoff |
+| **Dashboard** | ✅ | Cross-asset overview, live quotes, signal feed, portfolio snapshot |
+| **Watchlist** | ✅ | 19 instrumen default, add/remove, instrument detail (chart + technicals + fundamentals) |
+| **Signals** | ✅ | Custom alerts (price, %change, volume spike, RSI, MA), anomaly scanner (VOLUME_SPIKE, BREAKOUT, RSI_OB/OS, ANOMALY), Telegram notifications |
+| **Risk** | ✅ | Exposure tracking, VaR, drawdown monitor (with alert triggers), correlation matrix, position sizing calculator |
+| **Portfolio** | ✅ | Position tracking, live mark-to-market, PnL |
+| **Execution Bot** | ✅ | Paper trading (live prices), CCXT for live crypto, kill-switch, hard caps, tamper-evident audit log, anomaly detection |
+| **Backtesting** | ✅ | 4 strategies (MA Cross, RSI, Breakout, Buy&Hold), equity curve, metrics (Sharpe, max DD, win rate), persisted historical data |
+| **WebSocket** | ✅ | Real-time price streaming via socket.io mini-service |
+| **Security** | ✅ | CSP, CSRF, rate-limit, instrumentation error handlers, process isolation |
+
+### ⚠️ Akan dihapus di v2.0 (pivot crypto-only)
+
+- Yahoo Finance data source (`src/lib/data-sources/yahoo.ts`)
+- 7 IDX equities (BBCA, BBRI, TLKM, ASII, GOTO, TPIA, ICBP)
+- 4 forex pairs (EURUSD, GBPUSD, USDJPY, AUDUSD)
+- Gold (GC=F)
+- MT5 bridge planning (sudah deferred, sekarang irrelevant)
+
+### 🔴 Belum ada (blocker komersialisasi)
+
+- Multi-tenancy (1 user hardcoded)
+- PostgreSQL (SQLite tidak handle concurrent)
+- User-managed API keys via UI
+- Stripe billing
+- Cloud deployment (Docker + TLS + domain)
+- Self-service signup
+- Compliance docs (ToS, Privacy Policy, DPA)
+
+---
+
+## Roadmap ke SaaS Komersial
+
+Roadmap lengkap dengan 4 fase → [**ROADMAP.md**](./ROADMAP.md)
+
+**Ringkasan:**
+
+| Fase | Fokus | Estimasi | Outcome |
+|---|---|---|---|
+| **1. Commercial Foundation** | PostgreSQL + multi-tenancy + crypto-only + user-managed keys + Docker deploy | 3-4 sesi | Bisa serve multiple customers di 1 instance |
+| **2. SaaS Layer** | Stripe billing + signup + usage limits + admin dashboard | 2-3 sesi | Customer bisa self-onboard & pay |
+| **3. Institutional Hardening** | Audit log ekspansi + backup + compliance + monitoring + CI/CD + tests | 3-4 sesi | Lolos enterprise security review |
+| **4. Web3 Enhancement** | DefiLlama TVL + on-chain metrics + multi-exchange (10-15) + wallet tracking | 2-3 sesi | Differentiator vs kompetitor |
+| **5. Launch & Polish** | Docs + security audit + performance + support system | 2-3 sesi | Public launch ready |
 
 ---
 
 ## Tujuan Akhir
 
-Tujuan akhir proyek ini adalah menjadi **terminal trading pribadi yang lengkap dan self-hosted** dengan kemampuan:
+**Vision:** Menjadi terminal trading crypto/Web3 pilihan untuk trader institusional dan sophisticated retail globally, dengan standar keandalan data setara Bloomberg Terminal.
 
-1. **Riset terpadu** — satu dashboard untuk crypto, saham IDX, forex & gold dengan chart teknikal + fundamental.
-2. **Sinyal otomatis** — deteksi anomali volume, breakout, RSI ekstrem, return anomaly, dan drawdown breach dari data historis nyata.
-3. **Manajemen risiko institusional** — exposure tracking, position sizing, VaR, drawdown monitor, correlation matrix.
-4. **Eksekusi otomatis** — paper trading (data live, eksekusi simulasi) sebagai default, dengan jalur menuju live execution untuk crypto via CCXT.
-5. **Integritas data 100%** — setiap angka yang tampil bisa dilacak ke sumber pasar nyata + timestamp sinkron.
-6. **Local-first** — berjalan penuh di hardware kelas menengah tanpa bergantung mutlak pada cloud berbayar.
+**Mission:** Menyatukan riset, sinyal, risk, dan eksekusi crypto dalam satu platform self-hosted SaaS yang:
+1. **100% real data** — setiap angka terverifikasi ke sumber pasar nyata
+2. **Multi-exchange** — 10-15 top exchanges via CCXT, user pilih sendiri
+3. **Web3-native** — DefiLlama TVL, on-chain metrics, DeFi overview
+4. **Institutional-grade** — audit log tamper-evident, compliance docs, monitoring
+5. **Affordable** — VPS murah untuk testing, scale up saat revenue mengalir
 
-**Bukan tujuan:** menjamin profit. Seluruh sinyal bersifat probabilistik dan alat bantu keputusan, bukan nasihat keuangan.
-
----
-
-## Fitur yang Sudah Dikerjakan
-
-### ✅ Fase 0 — Data Layer
-- Pipeline data nyata untuk 3 kelas aset (crypto via Binance, IDX/forex/gold via Yahoo Finance).
-- Normalisasi ke skema internal seragam (OHLCV).
-- Setiap request ke data source dicatat ke `data_source_health_log` (status, latency, error).
-- Retry & backoff untuk API yang gagal, tanpa fallback ke data karangan.
-- **Persistensi `price_ohlcv`** — candle disimpan ke DB lokal saat di-fetch, siap untuk backtesting.
-
-### ✅ Fase 1 — Dashboard Riset
-- Watchlist lintas aset (19 instrumen default: 7 crypto, 7 IDX, 4 forex, 1 gold).
-- Chart candlestick custom (SVG) dengan MA20 overlay, volume bars, last-price tag.
-- Indikator teknikal: MA20, MA50, EMA12, RSI14, MACD, volume z-score.
-- Panel fundamental saham: PER, PBV, ROE, EPS, Revenue, Graham Number (dari Yahoo Finance).
-- Panel fundamental crypto: Market Cap, FDV, Circulating/Total/Max Supply (dari CoinGecko).
-- **Provenance Bar** di setiap panel — source + waktu sync terakhir (signature element PRD §13).
-
-### ✅ Fase 2 — Signal & Alert Engine
-- Custom alert berbasis threshold: price, %change 24h, volume spike (z-score), RSI, price vs MA.
-- Engine evaluasi alert terhadap data real (polling 60s) → trigger SignalEvent.
-- Scanner anomali (polling 180s): VOLUME_SPIKE, BREAKOUT, RSI_OB, RSI_OS, ANOMALY (return anomaly vs baseline statistik).
-- Baseline statistik dihitung dari data historis nyata (mean/std log-returns), bukan threshold arbitrer.
-- Dedup 1 jam per (instrument, signalType) untuk hindari spam.
-- **Notifikasi Telegram Bot** — setiap WARN/CRITICAL signal + alert trigger dikirim ke chat Telegram (fire-and-forget, never throws).
-
-### ✅ Fase 3 — Risk & Portfolio Management
-- Tracking posisi aktif lintas aset (manual entry, live mark-to-market).
-- Kalkulasi exposure per aset & per kelas aset (% dari total portofolio).
-- Position sizing calculator berbasis % risiko per trade vs equity.
-- Drawdown monitor (current vs historical max) dari reconstructed equity curve.
-- **Drawdown alert trigger (FR-3.4)** — SignalEvent DRAWDOWN_BREACH saat drawdown melewati -10% (WARN) / -20% (CRITICAL), + Telegram notification.
-- Correlation matrix antar aset (Pearson, pairwise, daily log-returns 3 bulan).
-- VaR (Value at Risk) parametrik 95% dari portfolio return series.
-
-### ✅ Fase 4 — Execution Bot
-- **Paper trading mode** — eksekusi disimulasikan, tapi harga fill = harga live real-time dari Binance.
-- **Live execution crypto** via CCXT (Binance) — siap, tapi default off (PAPER).
-- **Kill-switch** manual (tombol darurat) + otomatis (auto-fire saat daily drawdown > threshold).
-- **Hard caps** di level kode: max per-order USD, max per-day USD (configurable).
-- **Anomaly detection** — jika >5 order dalam 60s → auto kill-switch + alert.
-- **Large-order confirm** — order >80% per-order cap butuh konfirmasi manual.
-- **Audit log tamper-evident** — hash chain (setiap row = sha256(prevHash + content)), verifiable.
-- **Process isolation** — execution bot berjalan sebagai mini-service terpisah (port 3002), bukan di proses Next.js.
-- **MT5 (forex/gold live) DEFERRED** — Python-only API, tidak bisa diimplementasikan di stack TypeScript.
-
-### ✅ Security & Infrastructure
-- **Autentikasi** NextAuth v4 + bcrypt (password hash) + optional 2FA/TOTP (otplib).
-- **CSP, CSRF, rate-limit** via Next.js middleware + next.config headers.
-- **WebSocket real-time** — mini-service socket.io (port 3001) broadcast harga live dari Binance WS + Yahoo polling, dengan flash animation + LIVE indicator di UI.
-- Dark mode institusional (palette `#0B0E13`/`#151920`/`#262B33`, aksen gain `#2E9E6D` / loss `#C7484B` / brand `#3B5FE0`).
-- Font: IBM Plex Sans (heading), Inter (body), JetBrains Mono (semua angka finansial).
-- Responsive (mobile-first), sticky footer, nav rail persisten.
-
----
-
-## Yang Belum Dikerjakan
-
-Berikut yang belum diimplementasikan dari PRD, disusun jujur berdasarkan kondisi saat ini:
-
-### 🔴 Belum Sama Sekali
-
-| Item | PRD Reference | Alasan |
-|---|---|---|
-| **Live execution forex/gold via MetaTrader5** | FR-4.2 | MT5 adalah Python-only API. Stack ini TypeScript. Paper trading untuk forex/gold tetap berfungsi. |
-| **Backtesting engine** | §6 | Tabel `price_ohlcv` sudah persist, endpoint `/api/v1/history/[id]` sudah ada, tapi engine backtest (strategy runner, equity curve simulation, metrics) belum dibangun. |
-| **Audit log login & config changes** | §16.10 | Audit log saat ini hanya mencatat bot actions (order/kill-switch/mode). Login event, config alert changes belum di-audit. |
-| **Tamper-evident log untuk selain bot** | §16.10 | Hash chain hanya di audit log bot. Health log, alert log belum tamper-evident. |
-| **2FA/TOTP enable flow UI** | §16.3 | Backend TOTP verify sudah ada, endpoint `/api/auth/totp-setup` ada, tapi UI untuk scan QR & enable belum dibangun (manual env set). |
-| **Backup terenkripsi & restore test** | §16.6 | Belum ada backup automation. |
-
-### 🟡 Parsial
-
-| Item | Status |
-|---|---|
-| **DCF sederhana** (FR-1.3) | Graham Number dihitung jika EPS+PBV tersedia. DCF fair value selalu null — tidak ada data free cash flow. |
-| **Laporan keuangan resmi IDX** (§10) | Fundamental saham dari Yahoo Finance quoteSummary, bukan parsing langsung dari laporan resmi IDX. Yahoo sering rate-limited. |
-| **Telegram untuk INFO signals** | Hanya WARN/CRITICAL yang dikirim (untuk hindari spam). INFO signal (BREAKOUT) tidak dikirim. |
-| **CORS eksplisit whitelist** | Default Next.js CORS. Tapi CSP `connect-src` sudah restriktif. |
-
-### 🟠 Deviasi Tech Stack (driven by environment constraint)
-
-PRD §11 merekomendasikan Python (FastAPI) + DuckDB/TimescaleDB + Redis. Aktual: Next.js 16 (TypeScript) + SQLite (Prisma) + in-memory cache. Ini karena environment wajib Next.js 16. Dampak:
-- Library `ccxt` tetap dipakai (TS version tersedia).
-- `MetaTrader5` tidak bisa (Python-only) → forex/gold live execution deferred.
-- `pandas`/`numpy` tidak dipakai — indikator teknikal dihitung manual di `src/lib/indicators.ts`.
-
----
-
-## Yang Akan Dikerjakan Selanjutnya
-
-Prioritas lanjutan (jika proyek dilanjutkan):
-
-1. **Backtesting engine** — strategy runner + equity curve simulation menggunakan data `price_ohlcv` yang sudah persist. Priority tinggi karena fondasi data sudah ada.
-2. **MT5 bridge** untuk forex/gold live execution — kemungkinan via mini-service Python terpisah yang berkomunikasi dengan Next.js via HTTP.
-3. **2FA enable flow UI** — QR code scan + verification di settings page.
-4. **Audit log ekspansi** — cover login, config changes, alert mutations (dengan hash chain yang sama).
-5. **Telegram INFO signals** — opsi opt-in untuk receive INFO-level signals.
-6. **Fundamental dari laporan resmi IDX** — scraper/parser PDF laporan keuangan.
-7. **Backup automation** — scheduled encrypted backup + restore test.
-8. **Production hardening** — TLS via reverse proxy, Tailscale untuk akses remote, dependency scanning otomatis (`npm audit` di CI).
+**Bukan tujuan:** menjamin profit. Sinyal bersifat probabilistik, alat bantu keputusan, bukan nasihat keuangan.
 
 ---
 
 ## Arsitektur Sistem
 
+### Saat ini (v1.0 — multi-asset single-user)
+
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                    BROWSER (single page)                      │
 │  Login · Dashboard · Watchlist · Signals · Risk · Portfolio  │
-│  Execution · Data Sources   (react-query polling + WS live)  │
+│  Execution · Backtest · Data Sources                         │
 └───────────────┬─────────────────────────┬───────────────────┘
                 │ REST (auth+CSRF)        │ WebSocket
 ┌───────────────▼───────────┐  ┌──────────▼──────────────────┐
-│   Next.js 16 App (3000)    │  │  WS Prices mini-service     │
-│  - NextAuth + bcrypt+TOTP  │  │  (socket.io, port 3001)     │
-│  - Middleware: CSP/CSRF/   │  │  - Binance WS upstream      │
-│    rate-limit/auth         │  │  - Yahoo polling (15s)      │
-│  - API routes /api/v1/*    │  │  - Broadcast to clients     │
-│  - Prisma → SQLite         │  └─────────────────────────────┘
-└───────┬─────────────────────┘
-        │                    ┌────────────────────────────────┐
-        │                    │  Execution Bot mini-service    │
-        │   Caddy gateway    │  (Bun, port 3002)              │
-        │   (port 81)        │  - Paper + Live (CCXT)         │
-        │   XTransformPort   │  - Kill-switch + hard caps     │
-        └───────────────────►│  - Tamper-evident audit log    │
-                             │  - Raw SQL → same SQLite DB    │
-                             └────────────────────────────────┘
+│   Next.js 16 App (3000)    │  │  WS Prices (3001)           │
+│  - NextAuth + bcrypt+TOTP  │  │  - Binance WS upstream      │
+│  - Middleware: CSP/CSRF/   │  │  - Yahoo polling            │
+│    rate-limit/auth         │  └─────────────────────────────┘
+│  - API routes /api/v1/*    │
+│  - Prisma → SQLite         │  ┌─────────────────────────────┐
+└───────┬─────────────────────┘  │  Execution Bot (3002)       │
+        │   Caddy gateway (81)   │  - Paper + Live (CCXT)      │
+        │   XTransformPort       │  - Kill-switch + hard caps  │
+        └───────────────────►    │  - Tamper-evident audit log │
+                                └─────────────────────────────┘
         │
 ┌───────▼─────────────────────────────────────────────────────┐
-│         SUMBER DATA EKSTERNAL (real, gratis/freemium)        │
-│  Binance (crypto) · Yahoo Finance (IDX/forex/gold) ·         │
-│  CoinGecko (crypto fundamentals)                             │
+│    SUMBER DATA: Binance · Yahoo · CoinGecko                  │
 └──────────────────────────────────────────────────────────────┘
 ```
 
-**Caddy gateway** (port 81) adalah satu-satunya port yang expose externally. Frontend memanggil mini-services via relative path + `?XTransformPort=3001/3002` query, yang Caddy forward ke port yang sesuai.
+### Target v2.0 (crypto/Web3 SaaS)
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│              BROWSER (multi-tenant, global users)             │
+│  Signup · Billing · Dashboard · Watchlist · Signals · Risk   │
+│  Portfolio · Execution · Backtest · Settings (API keys)      │
+└───────────────┬─────────────────────────┬───────────────────┘
+                │ HTTPS (TLS via Caddy)   │ WSS
+┌───────────────▼───────────────────────────┐  ┌──────────────▼──────────┐
+│   Next.js 16 App (Docker container)        │  │  WS Prices (Docker)     │
+│  - Multi-tenant auth (NextAuth + DB users) │  │  - Multi-exchange WS    │
+│  - Stripe billing + plan tiers             │  │  - Per-tenant isolation │
+│  - User-managed encrypted API keys         │  └─────────────────────────┘
+│  - Usage limits per plan                   │
+│  - Prisma → PostgreSQL (managed)           │  ┌─────────────────────────┐
+└───────┬─────────────────────────────────────┘  │  Execution Bot (Docker) │
+        │                                       │  - Per-tenant CCXT       │
+        │   VPS (Hetzner/DO) + custom domain     │  - Per-tenant hard caps  │
+        │                                       │  - Shared audit log      │
+        └──────────────────────────────────────►└─────────────────────────┘
+        │
+┌───────▼─────────────────────────────────────────────────────┐
+│  SUMBER DATA: Binance · Coinbase · Kraken · Bybit · OKX ·   │
+│  ... (10-15 top exchanges via CCXT) · CoinGecko · DefiLlama │
+└──────────────────────────────────────────────────────────────┘
+```
 
 ---
 
 ## Tech Stack
 
-| Layer | Teknologi | Alasan |
-|---|---|---|
-| **Frontend** | Next.js 16 + React 19 + TypeScript 5 | App Router, ekosistem matang untuk dashboard data-heavy |
-| **Styling** | Tailwind CSS 4 + shadcn/ui (New York) | Komponen institusional, customizable |
-| **Font** | IBM Plex Sans + Inter + JetBrains Mono | Heading teknikal, body readable, angka monospace |
-| **Charting** | Custom SVG candlestick | Full control, no heavy dep, institutional look |
-| **State** | TanStack Query (server) + Zustand (client) | Polling + cache for server state, nav for client |
-| **Database** | SQLite via Prisma ORM | Local-first, no server needed, easy schema migration |
-| **Auth** | NextAuth.js v4 + bcryptjs + otplib | Credentials provider + hashed password + TOTP |
-| **Realtime** | socket.io (mini-service) | Binance WS upstream → broadcast ke clients |
-| **Notifications** | node-telegram-bot-api | Gratis, real-time, mudah |
-| **Execution** | ccxt (crypto) | Library matang, multi-exchange |
-| **Gateway** | Caddy | Reverse proxy + XTransformPort routing |
-| **Runtime** | Bun (mini-services) + Node (Next.js) | Bun untuk speed di mini-services |
+| Layer | Saat ini | Target v2.0 | Alasan |
+|---|---|---|---|
+| **Frontend** | Next.js 16 + React 19 + TypeScript 5 | sama | App Router, ecosystem matang |
+| **Styling** | Tailwind CSS 4 + shadcn/ui | sama | Institutional components |
+| **Charting** | Custom SVG candlestick | sama | Full control, no heavy dep |
+| **State** | TanStack Query + Zustand | sama | Server + client state |
+| **Database** | SQLite via Prisma | **PostgreSQL** via Prisma | Concurrent users, scale |
+| **Auth** | NextAuth v4 + bcrypt + TOTP | sama + multi-user | Single → multi-tenant |
+| **Realtime** | socket.io mini-service | sama + per-tenant | Live prices |
+| **Billing** | — | **Stripe** | Global, crypto-friendly |
+| **Notifications** | node-telegram-bot-api | sama | Gratis, real-time |
+| **Execution** | ccxt (Binance) | **ccxt (10-15 exchanges)** | Multi-exchange global |
+| **Web3 data** | — | **DefiLlama + on-chain** | TVL, protocol stats |
+| **Gateway** | Caddy | sama + TLS + domain | Reverse proxy |
+| **Deploy** | Local | **Docker + VPS** | Cloud, scalable |
+| **Monitoring** | — | **Sentry + uptime** | Observability |
 
 ---
 
-## Cara Menjalankan
+## Cara Menjalankan (v1.0 saat ini)
 
 ### Prasyarat
 - Node.js 18+ / Bun
-- SQLite (sudah bundle)
-- Koneksi internet (untuk akses Binance/Yahoo/CoinGecko API)
+- SQLite (bundle)
+- Internet (untuk Binance/Yahoo/CoinGecko API)
 
 ### Langkah
 
-1. **Clone & install dependencies:**
+1. **Clone & install:**
    ```bash
    git clone https://github.com/Zayidan123/MERIDIAN_Terminal.git
    cd MERIDIAN_Terminal
    bun install
    ```
 
-2. **Konfigurasi environment:**
+2. **Konfigurasi:**
    ```bash
    cp .env.example .env
-   # Edit .env — set MERIDIAN_ADMIN_PASSWORD, NEXTAUTH_SECRET, dll.
+   # Edit .env — set MERIDIAN_ADMIN_PASSWORD, NEXTAUTH_SECRET
    ```
 
-3. **Setup database:**
+3. **Database:**
    ```bash
-   bun run db:push    # create schema + seed real instruments
+   bun run db:push    # create schema + seed instruments
    ```
 
-4. **Jalankan aplikasi utama:**
+4. **Jalankan app utama:**
    ```bash
    bun run dev        # Next.js di port 3000
    ```
 
-5. **(Opsional) Jalankan mini-services:**
+5. **(Opsional) Mini-services:**
    ```bash
    # WebSocket live prices (port 3001)
    cd mini-services/ws-prices && bun install && bun index.ts &
@@ -258,18 +262,16 @@ Prioritas lanjutan (jika proyek dilanjutkan):
    cd mini-services/execution-bot && bun install && bun index.ts &
    ```
 
-6. **Akses:** buka `http://localhost:3000` (atau via gateway `http://localhost:81`).
+6. **Akses:** buka `http://localhost:3000` atau gateway `http://localhost:81`
 
 7. **Login default:**
    - Email: `admin@meridian.local`
-   - Password: `Meridian@2025` (atau sesuai `MERIDIAN_ADMIN_PASSWORD` di `.env`)
-   - **UBAH password sebelum production!**
+   - Password: `Meridian@2025`
+   - **UBAH sebelum production!**
 
-### Mengaktifkan fitur opsional
+### Catatan preview panel
 
-- **Telegram:** set `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` di `.env`, restart. Test button di Data Sources module.
-- **2FA/TOTP:** set `MERIDIAN_TOTP_SECRET` (base32) + `NEXT_PUBLIC_TOTP_ENABLED=1`, restart.
-- **Live execution (crypto):** set `EXCHANGE_API_KEY` + `EXCHANGE_API_SECRET` (trade-only, no withdrawal, IP-whitelisted) di `.env`, restart, lalu confirm security checklist di Execution module.
+Jika mengakses via preview panel (cross-origin iframe), browser memblok cookies SameSite → login tidak berfungsi. App akan menampilkan tombol **"Open in New Tab"** — klik untuk membuka di tab browser penuh tempat cookies bekerja normal.
 
 ---
 
@@ -280,223 +282,118 @@ MERIDIAN_Terminal/
 ├── src/
 │   ├── app/
 │   │   ├── api/
-│   │   │   ├── auth/[...nextauth]/     # NextAuth handler
-│   │   │   ├── auth/totp-setup/        # 2FA setup endpoint
-│   │   │   └── v1/                     # REST API (protected by middleware)
-│   │   │       ├── instruments/        # CRUD instrumen
-│   │   │       ├── watchlist/          # watchlist management
-│   │   │       ├── prices/[id]/        # OHLCV candles (live fetch)
-│   │   │       ├── history/[id]/       # persisted candles (backtest source)
-│   │   │       ├── quotes/             # live quotes (batch + single)
-│   │   │       ├── technicals/[id]/    # MA/EMA/RSI/MACD/volume-z
-│   │   │       ├── fundamentals/[id]/  # equity (Yahoo) + crypto (CoinGecko)
-│   │   │       ├── market-summary/     # cross-asset snapshot
-│   │   │       ├── alerts/             # alert CRUD + evaluate engine
-│   │   │       ├── signals/            # signal feed + scan engine
-│   │   │       ├── portfolio/          # positions CRUD + live MTM
-│   │   │       ├── risk/               # summary + position-size calc
-│   │   │       ├── health/             # data source health log
-│   │   │       ├── notifications/      # Telegram config + test
-│   │   │       └── seed/               # seed real instruments
-│   │   ├── layout.tsx                  # fonts + theme + toaster
-│   │   ├── page.tsx                    # auth gate → LoginScreen / AppShell
-│   │   └── globals.css                 # institutional dark palette
+│   │   │   ├── auth/                    # NextAuth + TOTP setup/verify
+│   │   │   └── v1/                      # REST API (auth-protected)
+│   │   │       ├── instruments/         # CRUD instrumen
+│   │   │       ├── watchlist/           # watchlist management
+│   │   │       ├── prices/ + history/   # live + persisted candles
+│   │   │       ├── quotes/              # live quotes
+│   │   │       ├── technicals/          # MA/EMA/RSI/MACD
+│   │   │       ├── fundamentals/        # CoinGecko (crypto) + Yahoo (equity)
+│   │   │       ├── market-summary/      # cross-asset snapshot
+│   │   │       ├── alerts/ + signals/   # signal engine
+│   │   │       ├── portfolio/ + risk/   # position + risk management
+│   │   │       ├── backtest/            # strategy backtesting
+│   │   │       ├── settings/            # user preferences
+│   │   │       ├── notifications/       # Telegram config
+│   │   │       ├── health/              # data source health
+│   │   │       └── seed/                # seed instruments
+│   │   ├── layout.tsx
+│   │   ├── page.tsx                     # auth gate (handles iframe detection)
+│   │   └── globals.css                  # institutional dark palette
 │   ├── components/
-│   │   ├── terminal/                   # 8 module views + app shell
-│   │   │   ├── app-shell.tsx           # nav rail + status bar + footer
-│   │   │   ├── nav-rail.tsx            # left navigation (7 modules)
-│   │   │   ├── status-bar.tsx          # top: market summary + WS status
-│   │   │   ├── login-screen.tsx        # auth UI
-│   │   │   ├── dashboard-view.tsx      # cross-asset overview
-│   │   │   ├── watchlist-view.tsx      # table + instrument detail
-│   │   │   ├── instrument-detail.tsx   # chart + technicals + fundamentals
-│   │   │   ├── signals-view.tsx        # alerts + signal feed
-│   │   │   ├── risk-view.tsx           # exposure + VaR + DD + correlation
-│   │   │   ├── portfolio-view.tsx      # positions table
-│   │   │   ├── execution-view.tsx      # Fase 4 bot UI
-│   │   │   ├── sources-view.tsx        # data source health + Telegram
-│   │   │   ├── quote-table.tsx         # live quotes table (WS-integrated)
-│   │   │   └── candlestick-chart.tsx   # custom SVG chart + sparkline
-│   │   ├── ui/                         # shadcn/ui components
-│   │   ├── panel.tsx                   # institutional Panel + ProvenanceBar
-│   │   ├── provenance-bar.tsx          # signature: source + sync time
-│   │   ├── asset-badge.tsx             # asset class badge + change text
-│   │   └── providers.tsx               # SessionProvider + QueryClient
-│   ├── hooks/
-│   │   └── use-live-prices.ts          # socket.io singleton + flash
-│   └── lib/
-│       ├── auth.config.ts              # NextAuth options (bcrypt+TOTP)
-│       ├── auth.ts                     # getSession / requireAuth
-│       ├── api-client.ts               # typed hooks (react-query)
-│       ├── api.ts                      # API response envelope
-│       ├── data-sources/
-│       │   ├── binance.ts              # Binance REST client
-│       │   ├── yahoo.ts                # Yahoo Finance client
-│       │   ├── coingecko.ts            # CoinGecko fundamentals
-│       │   └── index.ts                # unified facade + persist
-│       ├── data-health.ts              # cache + health log + retry
-│       ├── indicators.ts               # SMA/EMA/RSI/MACD/correlation/VaR
-│       ├── persist-candles.ts          # write-through to price_ohlcv
-│       ├── notifications/telegram.ts   # Telegram bot service
-│       ├── seed.ts                     # 19 real instruments
-│       ├── store.ts                    # Zustand nav state
-│       ├── types.ts                    # domain types
-│       ├── format.ts                   # price/compact/pct/time formatters
-│       └── utils.ts                    # cn() helper
+│   │   ├── terminal/                    # 8 module views + app shell
+│   │   ├── ui/                          # shadcn/ui
+│   │   └── ...
+│   ├── hooks/                           # use-live-prices (socket.io)
+│   ├── lib/
+│   │   ├── auth.config.ts               # NextAuth (bcrypt + TOTP)
+│   │   ├── data-sources/                # binance, yahoo, coingecko
+│   │   ├── backtest/                    # strategies + runner
+│   │   ├── indicators.ts                # SMA/EMA/RSI/MACD/correlation/VaR
+│   │   ├── notifications/telegram.ts
+│   │   └── ...
+│   └── instrumentation.ts               # global error handlers (stability)
 ├── mini-services/
-│   ├── ws-prices/                      # socket.io, port 3001
-│   │   └── index.ts                    # Binance WS + Yahoo poll → broadcast
-│   └── execution-bot/                  # Bun, port 3002
-│       └── index.ts                    # paper/live orders + audit log
-├── prisma/
-│   └── schema.prisma                   # 11 models (Instrument, PriceOhlcv,
-│                                      #   Fundamental, Watchlist, Alert,
-│                                      #   SignalEvent, Position, RiskSnapshot,
-│                                      #   BotConfig, Order, AuditLog,
-│                                      #   DataSourceHealthLog)
-├── middleware.ts                       # auth + CSP + CSRF + rate-limit
-├── next.config.ts                      # security headers fallback
-├── Caddyfile                           # gateway config (XTransformPort)
-├── .env.example                        # env template (NO real secrets)
-└── .gitignore                          # excludes .env, db, node_modules, logs
+│   ├── ws-prices/                       # socket.io, port 3001
+│   └── execution-bot/                   # Bun, port 3002
+├── prisma/schema.prisma                 # 13 models
+├── middleware.ts                        # auth + CSP + CSRF + rate-limit
+├── next.config.ts                       # security headers
+├── Caddyfile                            # gateway config
+├── .env.example                         # env template
+├── ROADMAP.md                           # ← roadmap lengkap ke SaaS
+└── README.md                            # ← this file
 ```
-
----
-
-## Sumber Data
-
-Semua sumber data adalah **real, gratis/freemium**, dipakai sesuai ToS masing-masing.
-
-| Kelas Aset | Sumber | Data | Status |
-|---|---|---|---|
-| Crypto | Binance `data-api.binance.vision` | OHLCV klines, ticker/price, WS trade stream | ✅ Aktif |
-| Crypto | CoinGecko API | Market cap, FDV, circulating/total/max supply | ✅ Aktif (60s cache, 429-aware) |
-| IDX Equities | Yahoo Finance `query2.finance.yahoo.com` | Harga + chart + quoteSummary fundamentals | ✅ Aktif (sering 429) |
-| Forex | Yahoo Finance (`EURUSD=X` dll) | Harga + chart | ✅ Aktif |
-| Gold | Yahoo Finance `GC=F` (COMEX futures) | Harga + chart | ✅ Aktif |
-| ~~Forex/Gold~~ | ~~OANDA API~~ | ~~Harga real-time~~ | ❌ Tidak digunakan (Yahoo sebagai substitusi) |
-| ~~Crypto on-chain~~ | ~~DefiLlama~~ | ~~TVL~~ | ❌ Tidak diintegrasikan |
-| ~~Historical tick~~ | ~~Dukascopy~~ | ~~Tick historis~~ | ❌ Tidak diintegrasikan |
-| ~~IDX laporan resmi~~ | ~~IDX/perusahaan~~ | ~~Fundamental dari PDF~~ | ❌ Tidak diintegrasikan (pakai Yahoo) |
-
-**Catatan rate limit:** Yahoo Finance sering return 429 di sandbox ini. Sistem menampilkan "Source unavailable" secara jujur untuk affected rows, tidak menyembunyikan kegagalan. Crypto (Binance) stabil.
 
 ---
 
 ## Keamanan
 
-Implementasi keamanan mengikuti PRD §16 (Threat Model → Secure Coding Guardrail). Yang sudah:
+### ✅ Sudah implementasi (v1.0)
 
-- ✅ **Secrets via env** — tidak ada API key hardcoded di kode (`.env` di-gitignore).
-- ✅ **Password bcrypt-hashed** — `MERIDIAN_ADMIN_PASSWORD_HASH` atau auto-hash dari plaintext env.
-- ✅ **2FA/TOTP** — optional via `MERIDIAN_TOTP_SECRET` (otplib).
-- ✅ **Session cookie** — httpOnly, SameSite=Lax, 8h expiry.
-- ✅ **CSP strict** — `default-src 'self'`, `frame-ancestors 'none'`, `connect-src` terbatas.
-- ✅ **CSRF protection** — Origin header check pada POST/PUT/PATCH/DELETE.
-- ✅ **Rate limiting** — 600 req/min per IP di middleware.
-- ✅ **SQL injection prevention** — Prisma ORM (parameterized), raw SQL di mini-service juga parameterized.
-- ✅ **No eval/exec** — tidak ada `eval()` di kode.
-- ✅ **Process isolation** — execution bot terpisah dari web app (§16.7).
-- ✅ **API key trade-only** — dokumentasi + checklist dialog sebelum switch to LIVE.
-- ✅ **Hard caps** — max per-order & per-day di level kode (bukan strategi).
-- ✅ **Kill-switch** — manual + automatic (drawdown threshold).
-- ✅ **Audit log tamper-evident** — hash chain untuk bot actions.
-- ✅ **Anomaly detection** — >5 order/60s → auto kill-switch.
-- ✅ **Large-order confirm** — >80% per-order cap butuh konfirmasi.
+- Secrets via env (`.env` gitignored)
+- Password bcrypt-hashed + optional 2FA/TOTP
+- Session cookie httpOnly, SameSite=Lax
+- CSP strict, CSRF protection, rate-limiting (600/min)
+- SQL injection prevention (Prisma parameterized + raw SQL parameterized)
+- Process isolation (execution bot terpisah)
+- Audit log tamper-evident (hash chain) untuk bot actions
+- Hard caps + kill-switch untuk execution
+- Anomaly detection (>5 order/60s → auto kill)
+- Global error handlers (instrumentation.ts) untuk sandbox stability
 
-### ⚠️ Catatan Keamanan (jujur)
+### 🔴 Akan ditambahkan (v2.0+)
 
-- **Fallback default password** `Meridian@2025` ada di `src/lib/auth.config.ts` sebagai fallback ketika env tidak set. **Wajib diubah** via `.env` sebelum production. Ini deviasi minor dari PRD §16.2 (no secret in code) demi UX "fresh dev box can log in" — trade-off yang disengaja, didokumentasikan di sini.
-- **Bot API token** (`BOT_API_TOKEN`) optional — jika kosong, mini-service execution bot terbuka di local network. Cocok untuk local-only, tapi **wajib set** sebelum expose ke jaringan manapun.
-- **TLS/HTTPS** belum dikonfigurasi di sandbox (HTTP polos). Wajib reverse proxy dengan TLS (Caddy/Nginx) + Tailscale/WireGuard sebelum akses remote (§16.4).
-- **Dependency scanning** (`npm audit`) belum di-automate di CI.
-- **Backup** belum ada automation.
+- Multi-tenant row-level isolation
+- User-managed encrypted API keys (AES-256-GCM di DB)
+- Audit log ekspansi (login, config, alert mutations)
+- Backup automation + disaster recovery
+- Compliance docs (ToS, Privacy Policy, DPA, GDPR)
+- Monitoring (Sentry, uptime, metrics)
+- CI/CD + automated testing
+- Third-party security audit/pentest
 
 ---
 
 ## Tantangan Selama Development
 
-### 1. Rate limit API gratis yang agresif
-Yahoo Finance `query2` sering return 429 (Too Many Requests) di sandbox. CoinGecko juga. Binance `api.binance.com` sempat IP-banned permanen sehingga harus pindah ke `data-api.binance.vision`. **Solusi:** cache agresif (in-memory TTL), retry+backoff, dan honest error surface ("Source unavailable") sesuai PRD §6 — tidak pernah fabricate data.
-
-### 2. Dev server tidak stabil di sandbox
-Next.js dev server berkali-kali mati karena `ECONNRESET` dari koneksi Yahoo yang di-reset, plus masalah orphan process saat background. **Solusi:** pola `setsid` + subshell `(nohup ... &)` untuk daemon survival, restart otomatis.
-
-### 3. Prisma client drift setelah schema push
-Setelah `bun run db:push` menambah field baru, Next.js HMR re-compile route handlers tapi tidak invalidate `@prisma/client` module-level cache → `PrismaClientValidationError: Unknown argument`. **Solusi:** restart dev server setelah setiap schema change (didokumentasikan di worklog).
-
-### 4. Mini-service daemonization
-`nohup bun --hot index.ts &` tidak cukup — process mati ~10s setelah shell exit. `--hot` watcher parent orphan child. **Solusi:** `bun index.ts` (tanpa --hot) + `setsid` + subshell untuk reparent ke PID 1.
-
-### 5. Browser tidak bisa reach localhost:3000 langsung
-Agent Browser di sandbox tidak resolve `localhost` dengan andal. **Solusi:** akses via gateway Caddy port 81 yang forward ke 3000.
-
-### 6. Rate limit middleware terlalu ketat
-Awalnya 120 req/min — terlalu rendah untuk app data-heavy (quotes 30s, risk 60s, signals 60s, bot status 10s polling = burst). **Solusi:** naikkan ke 600 req/min, masih cukup untuk block brute-force.
-
-### 7. otplib v13 breaking change
-v13.4.1 drop v12 `authenticator` singleton. **Solusi:** switch ke `new OTP({ strategy:'totp' })` dengan `await otp.verify({ token, secret, epochTolerance:30 })`.
-
-### 8. Next.js 16 middleware deprecation
-`middleware.ts` deprecated → `proxy.ts`. Masih bekerja tapi warning. Dibiarkan sebagai `middleware.ts` per spec.
-
-### 9. Yahoo fundamentals (quoteSummary) unreliable
-Endpoint `quoteSummary` sering 429/blocked. **Solusi:** defensive parsing, honest null fields, fallback ke "Fundamentals unavailable" UI state.
-
-### 10. CORS + WebSocket routing
-Frontend harus connect ke WS service via gateway (`?XTransformPort=3001`), bukan langsung `localhost:3001`. **Solusi:** socket.io-client config dengan `query: { XTransformPort: '3001' }` ke same-origin.
-
----
-
-## Hal Paling Sulit
-
-### #1: Menjaga integritas data 100% saat sumber tidak stabil
-
-Ini tantangan filosofis sekaligus teknis. PRD §6 sangat eksplisit: "Dilarang keras menggunakan data simulasi... termasuk saat development atau demo." Tapi Yahoo Finance rate-limit terus-menerus, Binance IP-banned, CoinGecko 429. Godaan untuk "return something, anything" agar UI tidak kosong sangat besar.
-
-**Bagaimana diselesaikan:** Disiplin arsitektural — setiap data-source call return `DataResult<T>` dengan `ok: boolean`. Jika gagal, return `{ ok: false, error }`. API route pakai `fromResult()` yang otomatis return 502 + error message. Frontend render "Source unavailable" badge per-row. Tidak ada satu pun fallback ke data karangan di seluruh codebase.
-
-### #2: Execution bot dengan audit log tamper-evident
-
-Membangun hash chain yang benar (setiap row = sha256(prevHash + canonical content)) di SQLite dengan raw SQL, sambil menjaga tidak break data path, plus anomaly detection + hard caps + kill-switch + process isolation — ini paling kompleks. Subagent butuh context besar dan sempat timeout, harus di-resume.
-
-### #3: Reconciliasi real-time (WebSocket) dengan polling (REST)
-
-WebSocket memberikan price ticks, tapi 24h stats (change%, high, low, volume) butuh REST polling. Frontend harus overlay live price di atas polled quote tanpa conflict, plus flash animation yang re-fire pada back-to-back ticks (butuh `key={live-${time}}` untuk force remount). Detail kecil tapi tricky.
-
-### #4: Dashboard institusional yang dense tanpa library chart berat
-
-PRD §13 minta "density over decoration, presisi, bukan tampilan konsumen." TradingView Lightweight Charts bagus tapi add dep. **Solusi:** custom SVG candlestick chart (160 baris) dengan grid, volume bars, MA overlay, last-price tag — full control, zero dep, institutional look.
+1. **Rate limit API gratis** — Yahoo Finance sering 429, Binance sempat IP-banned. Solusi: cache + retry/backoff + honest error surface. (Akan hilang setelah pivot crypto-only.)
+2. **Dev server stability** — ECONNRESET dari Yahoo crash server. Solusi: `instrumentation.ts` global error handlers (212+ errors suppressed).
+3. **Prisma client drift** — schema push tidak invalidate module cache. Solusi: restart dev server setelah schema change.
+4. **Mini-service daemonization** — `nohup` tidak cukup. Solusi: `setsid` + subshell pattern.
+5. **Preview panel iframe** — cross-origin iframe blok SameSite cookies → login gagal. Solusi: detect iframe + "Open in New Tab" notice.
+6. **SQLite persistence** — `createMany skipDuplicates` tidak didukung. Solusi: raw `INSERT OR IGNORE`.
+7. **otplib v13 breaking change** — API beda dari v12. Solusi: `new OTP({ strategy: 'totp' })`.
+8. **NextAuth URL behind proxy** — hardcoded `NEXTAUTH_URL` salah port. Solusi: `trustHost: true` + auto-detect.
 
 ---
 
 ## Disclaimer
 
-Proyek ini adalah perangkat lunak teknis, **bukan nasihat keuangan**. Seluruh keputusan trading/investasi tetap menjadi tanggung jawab penuh pengguna. Sinyal, skor, atau output apa pun dari sistem ini bersifat alat bantu analisis, bukan jaminan hasil.
+Proyek ini adalah perangkat lunak teknis, **bukan nasihat keuangan**. Seluruh keputusan trading tetap tanggung jawab pengguna. Sinyal bersifat alat bantu analisis, bukan jaminan hasil.
 
-Pengguna bertanggung jawab memastikan penggunaan platform ini sesuai regulasi yang berlaku di Indonesia (mis. ketentuan OJK untuk efek, Bappebti untuk aset kripto) serta Terms of Service masing-masing penyedia data/API/exchange.
+Pengguna bertanggung jawab memastikan penggunaan sesuai regulasi yang berlaku (Bappebti untuk aset kripto di Indonesia, regulasi masing-masing negara untuk global) serta Terms of Service masing-masing exchange/API provider.
 
-**Gunakan modal yang siap Anda rugikan. Jangan pernah mengaktifkan LIVE execution mode tanpa memahami risikonya.**
+**Gunakan modal yang siap Anda rugikan. Jangan aktifkan LIVE execution tanpa memahami risikonya.**
 
 ---
 
 ## License
 
-MIT — bebas digunakan, dimodifikasi, didistribusikan. Tanpa jaminan.
+Commercial — semua hak dilindungi. Lisensi spesifik akan ditentukan sebelum launch SaaS.
 
 ---
 
 ## Acknowledgments
 
 - [Binance API](https://binance-docs.github.io/apidocs/) — crypto data
-- [Yahoo Finance](https://finance.yahoo.com/) — IDX/forex/gold data
 - [CoinGecko API](https://www.coingecko.com/api) — crypto fundamentals
-- [shadcn/ui](https://ui.shadcn.com/) — komponen UI
-- [Next.js](https://nextjs.org/) — framework
-- [Prisma](https://www.prisma.io/) — ORM
-- [CCXT](https://github.com/ccxt/ccxt) — crypto exchange library
-- [socket.io](https://socket.io/) — real-time communication
+- [CCXT](https://github.com/ccxt/ccxt) — multi-exchange library
+- [DefiLlama](https://defillama.com/) — TVL & protocol data (planned)
+- [shadcn/ui](https://ui.shadcn.com/) — UI components
+- [Next.js](https://nextjs.org/) · [Prisma](https://www.prisma.io/) · [socket.io](https://socket.io/)
 
 ---
 
-**MERIDIAN Terminal** — *Research · Signal · Risk · Execution. 100% real market data, zero simulation.*
+**MERIDIAN Terminal** — *Research · Signal · Risk · Execution. 100% real market data, zero simulation. Pivoting to crypto/Web3 SaaS.*
