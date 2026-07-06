@@ -29,14 +29,17 @@ export function LoginScreen() {
     setLoading(true);
 
     try {
+      // Try the next-auth client signIn first (uses fetch under the hood).
+      // This works in most same-origin contexts.
       const res = await signIn("credentials", {
         email,
         password,
         ...(TOTP_ENABLED ? { totp } : {}),
         redirect: false,
+        callbackUrl: window.location.origin + "/",
       });
 
-      if (!res || res.error) {
+      if (res && res.error) {
         toast.error("Authentication failed", {
           description: "Invalid email, password, or TOTP code.",
         });
@@ -44,8 +47,47 @@ export function LoginScreen() {
         return;
       }
 
-      // Force a full reload so the SessionProvider refetches and the
-      // AppShell mounts cleanly with all authed queries primed.
+      if (res && res.ok) {
+        // Force a full reload so the SessionProvider refetches and the
+        // AppShell mounts cleanly with all authed queries primed.
+        window.location.href = window.location.origin + "/";
+        return;
+      }
+
+      // Fallback: if signIn returned no ok flag (can happen in some iframe /
+      // cross-origin contexts where fetch cookies are blocked), use a native
+      // form POST. The browser handles cookies + redirect natively, which
+      // works even when fetch-based signIn doesn't.
+      const form = e.currentTarget.closest("form") as HTMLFormElement | null;
+      if (form) {
+        const hiddenForm = document.createElement("form");
+        hiddenForm.method = "POST";
+        hiddenForm.action = "/api/auth/callback/credentials";
+        hiddenForm.style.display = "none";
+
+        const fields: Record<string, string> = { email, password };
+        if (TOTP_ENABLED && totp) fields.totp = totp;
+        fields.callbackUrl = window.location.origin + "/";
+        fields.json = "true";
+
+        // Fetch the CSRF token first (required by NextAuth).
+        const csrfRes = await fetch("/api/auth/csrf");
+        const csrfData = await csrfRes.json();
+        fields.csrfToken = csrfData.csrfToken;
+
+        for (const [key, value] of Object.entries(fields)) {
+          const input = document.createElement("input");
+          input.type = "hidden";
+          input.name = key;
+          input.value = value;
+          hiddenForm.appendChild(input);
+        }
+        document.body.appendChild(hiddenForm);
+        hiddenForm.submit();
+        return;
+      }
+
+      // Last resort: just reload
       window.location.reload();
     } catch (err) {
       console.error("[login]", err);

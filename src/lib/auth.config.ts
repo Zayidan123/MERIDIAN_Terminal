@@ -78,6 +78,13 @@ export const authOptions: NextAuthOptions = {
     maxAge: 8 * 60 * 60,
   },
   secret: getAuthSecret(),
+  // trustHost lets NextAuth auto-detect the canonical URL from the Host /
+  // X-Forwarded-Host headers instead of requiring a hardcoded NEXTAUTH_URL.
+  // This is critical when the app is behind a reverse proxy (Caddy gateway
+  // on port 81) or embedded in a preview panel iframe — the access origin
+  // may differ from localhost:3000. Without this, redirects after login
+  // point to the wrong port and the session cookie never "sticks".
+  trustHost: true,
   providers: [
     CredentialsProvider({
       name: "Credentials",
@@ -139,6 +146,29 @@ export const authOptions: NextAuthOptions = {
         process.env.NODE_ENV === "production"
           ? "__Secure-next-auth.session-token"
           : "next-auth.session-token",
+      options: {
+        httpOnly: true,
+        // "lax" works for top-level navigation. For iframe embedding (preview
+        // panels), the browser may still block cookies in cross-site iframe
+        // contexts — but since the app itself requires same-origin fetch for
+        // the session check, this is acceptable. If iframe login issues
+        // persist, the fallback is a full-page form POST (see login-screen).
+        sameSite: "lax",
+        path: "/",
+        secure: process.env.NODE_ENV === "production",
+      },
+    },
+    csrfToken: {
+      name: "next-auth.csrf-token",
+      options: {
+        httpOnly: true,
+        sameSite: "lax",
+        path: "/",
+        secure: process.env.NODE_ENV === "production",
+      },
+    },
+    callbackUrl: {
+      name: "next-auth.callback-url",
       options: {
         httpOnly: true,
         sameSite: "lax",
