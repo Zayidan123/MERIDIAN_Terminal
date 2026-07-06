@@ -41,8 +41,15 @@ export function rangeToTimeframe(range: Range, source: string): string {
 /// Persist a batch of candles for an instrument+range. Upsert by the
 /// (instrumentId, timeframe, timestamp) unique key so re-fetching the same
 /// window updates existing rows instead of duplicating.
-/// Non-blocking: fires a single createMany with skipDuplicates for efficiency,
-/// swallows errors. Caller never waits on this for the data path.
+///
+/// SQLite in Prisma does NOT support `createMany({ skipDuplicates: true })`
+/// (that option is PostgreSQL/MySQL only). We use raw `INSERT OR IGNORE`
+/// which is native SQLite syntax that achieves the same semantics: rows
+/// violating the unique (instrumentId, timeframe, timestamp) constraint are
+/// silently skipped, new rows are inserted.
+///
+/// Non-blocking: the write is fire-and-forget. Caller never waits on this
+/// for the data path. Errors are logged, never thrown.
 export function persistCandles(
   instrument: Instrument,
   range: Range,
@@ -50,24 +57,31 @@ export function persistCandles(
 ): void {
   if (candles.length === 0) return;
   const timeframe = rangeToTimeframe(range, instrument.source);
-  const rows = candles.map((c) => ({
-    instrumentId: instrument.id,
-    timeframe,
-    timestamp: c.time,
-    open: c.open,
-    high: c.high,
-    low: c.low,
-    close: c.close,
-    volume: c.volume,
-    source: instrument.source,
-  }));
-  // createMany with skipDuplicates handles the upsert semantics for the
-  // compound unique index. SQLite supports this natively in Prisma.
-  db.priceOhlcv
-    .createMany({ data: rows, skipDuplicates: true })
-    .catch((e) => {
-      console.error("[persistCandles] failed", e);
-    });
+  // Build a parameterized multi-row INSERT OR IGNORE.
+  // fetchedAt has @default(now()) in schema → omit it, let DB default apply.
+  // Each row gets a generated id (crypto.randomUUID). Values are passed as
+  // flat params to prevent SQL injection (§16.5).
+  const placeholders: string[] = [];
+  const params: (string | number)[] = [];
+  for (const c of candles) {
+    placeholders.push("(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+    params.push(
+      crypto.randomUUID(),
+      instrument.id,
+      timeframe,
+      c.time,
+      c.open,
+      c.high,
+      c.low,
+      c.close,
+      c.volume,
+      instrument.source
+    );
+  }
+  const sql = `INSERT OR IGNORE INTO PriceOhlcv (id, instrumentId, timeframe, timestamp, open, high, low, close, volume, source) VALUES ${placeholders.join(", ")}`;
+  db.$executeRawUnsafe(sql, ...params).catch((e) => {
+    console.error("[persistCandles] failed", e);
+  });
 }
 
 /// Read persisted candles for an instrument+range from the local DB.
@@ -89,7 +103,7 @@ export async function readPersistedCandles(
     });
     if (rows.length < 5) return null; // not enough local history to be useful
     return rows.map((r) => ({
-      time: r.timestamp,
+      time: Number(r.timestamp),
       open: r.open,
       high: r.high,
       low: r.low,

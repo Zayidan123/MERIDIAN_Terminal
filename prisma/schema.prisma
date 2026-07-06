@@ -45,7 +45,7 @@ model PriceOhlcv {
   id           String   @id @default(cuid())
   instrumentId String
   timeframe    String   // "15m" | "1h" | "4h" | "1d" (the interval the candle represents)
-  timestamp    Int      // epoch ms (candle open time)
+  timestamp    BigInt   // epoch ms (candle open time — BigInt because ms overflows 32-bit Int)
   open         Float
   high         Float
   low          Float

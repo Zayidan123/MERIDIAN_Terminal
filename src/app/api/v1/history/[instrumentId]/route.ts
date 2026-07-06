@@ -31,7 +31,7 @@ export async function GET(
     });
 
     const candles: Candle[] = rows.map((r) => ({
-      time: r.timestamp,
+      time: Number(r.timestamp),
       open: r.open,
       high: r.high,
       low: r.low,
